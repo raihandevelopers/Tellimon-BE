@@ -14,15 +14,32 @@ import activityLogRoutes from './routes/activityLogs.js'
 const app = express()
 const PORT = process.env.PORT || 5000
 
-const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:5173', 'https://hitechpbxworld.com', 'https://hitechpbxworld.com/')
-  .split(',')
-  .map((o) => o.trim())
-  .filter(Boolean)
+const DEFAULT_CLIENT_URL =
+  'http://localhost:5173,https://tellimon-fe.vercel.app,https://hitechpbxworld.com,https://www.hitechpbxworld.com'
+
+function normalizeOrigin(origin) {
+  return origin?.trim().replace(/\/$/, '') || ''
+}
+
+const allowedOrigins = new Set(
+  (process.env.CLIENT_URL || DEFAULT_CLIENT_URL)
+    .split(',')
+    .map(normalizeOrigin)
+    .filter(Boolean)
+)
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true
+  const normalized = normalizeOrigin(origin)
+  if (allowedOrigins.has(normalized)) return true
+  if (/^https:\/\/[\w.-]+\.vercel\.app$/.test(normalized)) return true
+  return false
+}
 
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (isAllowedOrigin(origin)) {
         callback(null, true)
       } else {
         callback(new Error(`CORS blocked: ${origin}`))
