@@ -2,6 +2,8 @@ import express from 'express'
 import Campaign from '../models/Campaign.js'
 import { authRequired } from '../middleware/auth.js'
 import { toJSON, toJSONList } from '../config/db.js'
+import User from '../models/User.js'
+import { logActivity } from '../utils/logActivity.js'
 
 const router = express.Router()
 
@@ -32,6 +34,16 @@ router.post('/', async (req, res) => {
       active: active !== false,
     })
 
+    const user = await User.findById(req.userId)
+    await logActivity({
+      userId: req.userId,
+      actorName: user?.name,
+      action: 'campaign_created',
+      category: 'campaign',
+      description: `Created campaign "${name.trim()}"`,
+      metadata: { campaignId: campaign._id, strategy },
+    })
+
     res.status(201).json(toJSON(campaign))
   } catch (err) {
     console.error('Create campaign error:', err)
@@ -43,6 +55,16 @@ router.delete('/:id', async (req, res) => {
   try {
     const campaign = await Campaign.findOneAndDelete({ _id: req.params.id, userId: req.userId })
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' })
+
+    const user = await User.findById(req.userId)
+    await logActivity({
+      userId: req.userId,
+      actorName: user?.name,
+      action: 'campaign_deleted',
+      category: 'campaign',
+      description: `Deleted campaign "${campaign.name}"`,
+    })
+
     res.json({ success: true })
   } catch (err) {
     console.error('Delete campaign error:', err)

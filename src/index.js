@@ -9,6 +9,7 @@ import campaignRoutes from './routes/campaigns.js'
 import blockedRoutes from './routes/blockedContacts.js'
 import dashboardRoutes from './routes/dashboard.js'
 import callRoutes from './routes/calls.js'
+import activityLogRoutes from './routes/activityLogs.js'
 
 const app = express()
 const PORT = process.env.PORT || 5000
@@ -42,6 +43,7 @@ app.use('/api/campaigns', campaignRoutes)
 app.use('/api/blocked-contacts', blockedRoutes)
 app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/calls', callRoutes)
+app.use('/api/activity-logs', activityLogRoutes)
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' })

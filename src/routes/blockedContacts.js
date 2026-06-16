@@ -2,6 +2,8 @@ import express from 'express'
 import BlockedContact from '../models/BlockedContact.js'
 import { authRequired } from '../middleware/auth.js'
 import { toJSON, toJSONList } from '../config/db.js'
+import User from '../models/User.js'
+import { logActivity } from '../utils/logActivity.js'
 
 const router = express.Router()
 
@@ -35,6 +37,16 @@ router.post('/', async (req, res) => {
       status: 'Active',
     })
 
+    const user = await User.findById(req.userId)
+    await logActivity({
+      userId: req.userId,
+      actorName: user?.name,
+      action: 'contact_blocked',
+      category: 'blocked',
+      description: `Blocked number ${number.trim()}`,
+      metadata: { number: number.trim() },
+    })
+
     res.status(201).json(toJSON(contact))
   } catch (err) {
     console.error('Create blocked contact error:', err)
@@ -46,6 +58,17 @@ router.delete('/:id', async (req, res) => {
   try {
     const contact = await BlockedContact.findOneAndDelete({ _id: req.params.id, userId: req.userId })
     if (!contact) return res.status(404).json({ error: 'Contact not found' })
+
+    const user = await User.findById(req.userId)
+    await logActivity({
+      userId: req.userId,
+      actorName: user?.name,
+      action: 'contact_unblocked',
+      category: 'blocked',
+      description: `Removed blocked number ${contact.number}`,
+      metadata: { number: contact.number },
+    })
+
     res.json({ success: true })
   } catch (err) {
     console.error('Delete blocked contact error:', err)

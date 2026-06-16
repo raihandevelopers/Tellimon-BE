@@ -2,6 +2,8 @@ import express from 'express'
 import Buyer from '../models/Buyer.js'
 import { authRequired } from '../middleware/auth.js'
 import { toJSON, toJSONList } from '../config/db.js'
+import User from '../models/User.js'
+import { logActivity } from '../utils/logActivity.js'
 
 const router = express.Router()
 
@@ -35,6 +37,16 @@ router.post('/', async (req, res) => {
       status: status || 'Active',
     })
 
+    const user = await User.findById(req.userId)
+    await logActivity({
+      userId: req.userId,
+      actorName: user?.name,
+      action: 'buyer_created',
+      category: 'buyer',
+      description: `Created buyer ${name?.trim() || number.trim()}`,
+      metadata: { buyerId: buyer._id, number: number.trim() },
+    })
+
     res.status(201).json(toJSON(buyer))
   } catch (err) {
     console.error('Create buyer error:', err)
@@ -46,6 +58,17 @@ router.delete('/:id', async (req, res) => {
   try {
     const buyer = await Buyer.findOneAndDelete({ _id: req.params.id, userId: req.userId })
     if (!buyer) return res.status(404).json({ error: 'Buyer not found' })
+
+    const user = await User.findById(req.userId)
+    await logActivity({
+      userId: req.userId,
+      actorName: user?.name,
+      action: 'buyer_deleted',
+      category: 'buyer',
+      description: `Deleted buyer ${buyer.name || buyer.number}`,
+      metadata: { number: buyer.number },
+    })
+
     res.json({ success: true })
   } catch (err) {
     console.error('Delete buyer error:', err)

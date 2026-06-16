@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs'
 import User from '../models/User.js'
 import { signToken, authRequired } from '../middleware/auth.js'
 import { toJSON } from '../config/db.js'
+import { logActivity } from '../utils/logActivity.js'
 
 const router = express.Router()
 
@@ -38,6 +39,13 @@ router.post('/login', async (req, res) => {
     }
 
     const token = signToken(user._id)
+    await logActivity({
+      userId: user._id,
+      actorName: user.name,
+      action: 'login',
+      category: 'auth',
+      description: `${user.name} signed in`,
+    })
     res.json({ token, user: publicUser(user) })
   } catch (err) {
     console.error('Login error:', err)

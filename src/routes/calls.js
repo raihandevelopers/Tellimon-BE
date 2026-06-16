@@ -3,6 +3,7 @@ import mongoose from 'mongoose'
 import CallRecord from '../models/CallRecord.js'
 import { authRequired } from '../middleware/auth.js'
 import { toJSON, toJSONList } from '../config/db.js'
+import { logActivity } from '../utils/logActivity.js'
 
 const router = express.Router()
 
@@ -118,6 +119,15 @@ router.post('/webhook', async (req, res) => {
       uniqueId: uniqueId || '',
       startedAt: startedAt ? new Date(startedAt) : new Date(),
       endedAt: endedAt ? new Date(endedAt) : new Date(),
+    })
+
+    await logActivity({
+      userId,
+      actorName: 'System',
+      action: 'call_completed',
+      category: 'call',
+      description: `Call from ${caller} — ${status || 'completed'} (${billsec ?? duration ?? 0}s)`,
+      metadata: { callId: call._id, caller, did },
     })
 
     res.status(201).json({ call: toJSON(call) })
