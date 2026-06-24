@@ -162,6 +162,13 @@ router.post('/webhook', async (req, res) => {
     if (uniqueId) {
       const existing = await CallRecord.findOne({ uniqueId })
       if (existing) {
+        if (recordingUrl && recordingUrl !== existing.recordingUrl) {
+          existing.recordingUrl = recordingUrl
+          if (billsec != null) existing.billsec = billsec
+          if (duration != null) existing.duration = duration
+          if (status) existing.status = status
+          await existing.save()
+        }
         return res.json({ call: toJSON(existing), duplicate: true })
       }
     }
