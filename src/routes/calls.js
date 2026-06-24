@@ -153,9 +153,11 @@ router.post('/webhook', async (req, res) => {
       endedAt,
     } = req.body
 
-    if (!userId || !caller) {
-      return res.status(400).json({ error: 'userId and caller are required' })
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' })
     }
+
+    const callerDigits = String(caller || '').replace(/\D/g, '') || 'unknown'
 
     if (uniqueId) {
       const existing = await CallRecord.findOne({ uniqueId })
@@ -166,11 +168,11 @@ router.post('/webhook', async (req, res) => {
 
     const call = await CallRecord.create({
       userId,
-      caller,
+      caller: callerDigits,
       did: did || '',
-      buyerId: buyerId || undefined,
+      buyerId: buyerId && /^[a-f0-9]{24}$/i.test(buyerId) ? buyerId : undefined,
       buyerNumber: buyerNumber || '',
-      campaignId: campaignId || undefined,
+      campaignId: campaignId && /^[a-f0-9]{24}$/i.test(campaignId) ? campaignId : undefined,
       status: status || 'missed',
       duration: duration ?? 0,
       billsec: billsec ?? duration ?? 0,
