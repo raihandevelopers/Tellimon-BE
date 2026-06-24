@@ -42,7 +42,7 @@ router.get('/recordings/:filename', authRequired, async (req, res) => {
     }
 
     const buffer = Buffer.from(await audioRes.arrayBuffer())
-    res.set('Content-Type', audioRes.headers.get('content-type') || 'audio/wav')
+    res.set('Content-Type', 'audio/wav')
     res.set('Content-Disposition', `inline; filename="${filename}"`)
     res.set('Cache-Control', 'private, max-age=3600')
     res.send(buffer)
