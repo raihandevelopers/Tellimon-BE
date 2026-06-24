@@ -2,6 +2,7 @@ import express from 'express'
 import DID from '../models/DID.js'
 import CallRecord from '../models/CallRecord.js'
 import Campaign from '../models/Campaign.js'
+import Buyer from '../models/Buyer.js'
 import User from '../models/User.js'
 import { authRequired } from '../middleware/auth.js'
 import { toJSON, toJSONList } from '../config/db.js'
@@ -35,7 +36,11 @@ router.get('/', async (req, res) => {
         const campaign = d.campaignId
           ? await Campaign.findOne({ _id: d.campaignId, userId: req.userId })
           : null
+        const buyer = d.buyerId
+          ? await Buyer.findOne({ _id: d.buyerId, userId: req.userId })
+          : null
         json.campaignName = campaign?.name || null
+        json.buyerName = buyer?.name || null
         json.callsToday = await callsTodayForDid(req.userId, d.number)
         return json
       })
@@ -49,7 +54,7 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { number, status, trunk, campaignId } = req.body
+    const { number, status, trunk, campaignId, buyerId } = req.body
     const normalized = normalizeDidNumber(number)
     if (!normalized) {
       return res.status(400).json({ error: 'DID number is required' })
@@ -59,6 +64,10 @@ router.post('/', async (req, res) => {
       const campaign = await Campaign.findOne({ _id: campaignId, userId: req.userId })
       if (!campaign) return res.status(400).json({ error: 'Campaign not found' })
     }
+    if (buyerId) {
+      const buyer = await Buyer.findOne({ _id: buyerId, userId: req.userId })
+      if (!buyer) return res.status(400).json({ error: 'Buyer not found' })
+    }
 
     const did = await DID.create({
       userId: req.userId,
@@ -66,6 +75,7 @@ router.post('/', async (req, res) => {
       status: status || 'Active',
       trunk: trunk?.trim() || '8138073157',
       campaignId: campaignId || undefined,
+      buyerId: buyerId || undefined,
     })
 
     const user = await User.findById(req.userId)
@@ -89,7 +99,7 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
   try {
-    const { status, trunk, campaignId } = req.body
+    const { status, trunk, campaignId, buyerId } = req.body
     const did = await DID.findOne({ _id: req.params.id, userId: req.userId })
     if (!did) return res.status(404).json({ error: 'DID not found' })
 
@@ -100,6 +110,15 @@ router.put('/:id', async (req, res) => {
         did.campaignId = campaignId
       } else {
         did.campaignId = undefined
+      }
+    }
+    if (buyerId !== undefined) {
+      if (buyerId) {
+        const buyer = await Buyer.findOne({ _id: buyerId, userId: req.userId })
+        if (!buyer) return res.status(400).json({ error: 'Buyer not found' })
+        did.buyerId = buyerId
+      } else {
+        did.buyerId = undefined
       }
     }
     if (status) did.status = status

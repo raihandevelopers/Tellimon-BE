@@ -11,6 +11,7 @@ import dashboardRoutes from './routes/dashboard.js'
 import callRoutes from './routes/calls.js'
 import activityLogRoutes from './routes/activityLogs.js'
 import didRoutes from './routes/dids.js'
+import routingRoutes from './routes/routing.js'
 
 const app = express()
 const PORT = process.env.PORT || 5000
@@ -74,6 +75,7 @@ app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/calls', callRoutes)
 app.use('/api/activity-logs', activityLogRoutes)
 app.use('/api/dids', didRoutes)
+app.use('/api/routing', routingRoutes)
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' })

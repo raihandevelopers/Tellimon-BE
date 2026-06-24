@@ -21,7 +21,7 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { name, strategy, duplicateHandling, active } = req.body
+    const { name, strategy, duplicateHandling, active, buyerIds } = req.body
     if (!name?.trim()) {
       return res.status(400).json({ error: 'Campaign name is required' })
     }
@@ -32,6 +32,7 @@ router.post('/', async (req, res) => {
       strategy: strategy || 'Sticky',
       duplicateHandling: duplicateHandling || 'Normal',
       active: active !== false,
+      buyerIds: Array.isArray(buyerIds) ? buyerIds : [],
     })
 
     const user = await User.findById(req.userId)
@@ -59,6 +60,9 @@ router.put('/:id', async (req, res) => {
     const fields = ['name', 'strategy', 'duplicateHandling', 'active']
     for (const field of fields) {
       if (req.body[field] !== undefined) campaign[field] = req.body[field]
+    }
+    if (req.body.buyerIds !== undefined) {
+      campaign.buyerIds = Array.isArray(req.body.buyerIds) ? req.body.buyerIds : []
     }
     if (req.body.name) campaign.name = req.body.name.trim()
 

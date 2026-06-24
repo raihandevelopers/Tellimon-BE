@@ -5,6 +5,8 @@ import LiveCall from '../models/LiveCall.js'
 import { authRequired } from '../middleware/auth.js'
 import { toJSON, toJSONList } from '../config/db.js'
 import { logActivity } from '../utils/logActivity.js'
+import { updateRoutingAfterCall } from '../utils/routing.js'
+import Campaign from '../models/Campaign.js'
 
 const router = express.Router()
 
@@ -186,6 +188,26 @@ router.post('/webhook', async (req, res) => {
       category: 'call',
       description: `Call from ${caller} — ${status || 'completed'} (${billsec ?? duration ?? 0}s)`,
       metadata: { callId: call._id, caller, did },
+    })
+
+    let strategy = ''
+    let duplicateHandling = 'Normal'
+    if (campaignId) {
+      const campaign = await Campaign.findOne({ _id: campaignId, userId })
+      if (campaign) {
+        strategy = campaign.strategy
+        duplicateHandling = campaign.duplicateHandling
+      }
+    }
+
+    await updateRoutingAfterCall({
+      userId,
+      caller,
+      buyerId: buyerId || call.buyerId,
+      campaignId,
+      status: status || 'missed',
+      strategy,
+      duplicateHandling,
     })
 
     res.status(201).json({ call: toJSON(call) })
