@@ -17,6 +17,41 @@ function formatDuration(seconds) {
   return `${m}:${String(r).padStart(2, '0')}`
 }
 
+const RECORDINGS_BASE =
+  process.env.RECORDINGS_BASE_URL || 'http://91.108.104.221/recordings'
+
+router.get('/recordings/:filename', authRequired, async (req, res) => {
+  try {
+    const filename = String(req.params.filename || '')
+    if (!/^[\w.-]+\.wav$/i.test(filename)) {
+      return res.status(400).json({ error: 'Invalid recording filename' })
+    }
+
+    const ownsRecording = await CallRecord.findOne({
+      userId: req.userId,
+      recordingUrl: { $regex: filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') },
+    })
+    if (!ownsRecording) {
+      return res.status(404).json({ error: 'Recording not found' })
+    }
+
+    const upstream = `${RECORDINGS_BASE.replace(/\/$/, '')}/${filename}`
+    const audioRes = await fetch(upstream)
+    if (!audioRes.ok) {
+      return res.status(404).json({ error: 'Recording file not found on server' })
+    }
+
+    const buffer = Buffer.from(await audioRes.arrayBuffer())
+    res.set('Content-Type', audioRes.headers.get('content-type') || 'audio/wav')
+    res.set('Content-Disposition', `inline; filename="${filename}"`)
+    res.set('Cache-Control', 'private, max-age=3600')
+    res.send(buffer)
+  } catch (err) {
+    console.error('Recording proxy error:', err)
+    res.status(500).json({ error: 'Failed to fetch recording' })
+  }
+})
+
 router.get('/', authRequired, async (req, res) => {
   try {
     const { status, from, to, page = 1, limit = 20 } = req.query
