@@ -10,6 +10,7 @@ import blockedRoutes from './routes/blockedContacts.js'
 import dashboardRoutes from './routes/dashboard.js'
 import callRoutes from './routes/calls.js'
 import activityLogRoutes from './routes/activityLogs.js'
+import didRoutes from './routes/dids.js'
 
 const app = express()
 const PORT = process.env.PORT || 5000
@@ -50,6 +51,17 @@ app.use(
 )
 app.use(express.json())
 
+let ready = connectDB().then(() => ensureSeedData())
+
+app.use(async (_req, _res, next) => {
+  try {
+    await ready
+    next()
+  } catch (err) {
+    next(err)
+  }
+})
+
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', service: 'tellimon-backend' })
 })
@@ -61,6 +73,7 @@ app.use('/api/blocked-contacts', blockedRoutes)
 app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/calls', callRoutes)
 app.use('/api/activity-logs', activityLogRoutes)
+app.use('/api/dids', didRoutes)
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' })
@@ -71,15 +84,15 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'Internal server error' })
 })
 
-async function start() {
-  await connectDB()
-  await ensureSeedData()
-  app.listen(PORT, () => {
-    console.log(`Tellimon API running on http://localhost:${PORT}`)
+if (!process.env.VERCEL) {
+  ready.then(() => {
+    app.listen(PORT, () => {
+      console.log(`Tellimon API running on http://localhost:${PORT}`)
+    })
+  }).catch((err) => {
+    console.error('Failed to start server:', err)
+    process.exit(1)
   })
 }
 
-start().catch((err) => {
-  console.error('Failed to start server:', err)
-  process.exit(1)
-})
+export default app

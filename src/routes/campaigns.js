@@ -51,6 +51,35 @@ router.post('/', async (req, res) => {
   }
 })
 
+router.put('/:id', async (req, res) => {
+  try {
+    const campaign = await Campaign.findOne({ _id: req.params.id, userId: req.userId })
+    if (!campaign) return res.status(404).json({ error: 'Campaign not found' })
+
+    const fields = ['name', 'strategy', 'duplicateHandling', 'active']
+    for (const field of fields) {
+      if (req.body[field] !== undefined) campaign[field] = req.body[field]
+    }
+    if (req.body.name) campaign.name = req.body.name.trim()
+
+    await campaign.save()
+
+    const user = await User.findById(req.userId)
+    await logActivity({
+      userId: req.userId,
+      actorName: user?.name,
+      action: 'campaign_updated',
+      category: 'campaign',
+      description: `Updated campaign "${campaign.name}"`,
+    })
+
+    res.json(toJSON(campaign))
+  } catch (err) {
+    console.error('Update campaign error:', err)
+    res.status(500).json({ error: 'Failed to update campaign' })
+  }
+})
+
 router.delete('/:id', async (req, res) => {
   try {
     const campaign = await Campaign.findOneAndDelete({ _id: req.params.id, userId: req.userId })

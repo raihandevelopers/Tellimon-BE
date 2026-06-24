@@ -54,6 +54,37 @@ router.post('/', async (req, res) => {
   }
 })
 
+router.put('/:id', async (req, res) => {
+  try {
+    const buyer = await Buyer.findOne({ _id: req.params.id, userId: req.userId })
+    if (!buyer) return res.status(404).json({ error: 'Buyer not found' })
+
+    const fields = ['name', 'number', 'dailyCap', 'priority', 'ringTimeout', 'concurrentCalls', 'status']
+    for (const field of fields) {
+      if (req.body[field] !== undefined) {
+        buyer[field] = field === 'name' ? String(req.body[field]).trim() : req.body[field]
+      }
+    }
+    if (req.body.number) buyer.number = req.body.number.trim()
+
+    await buyer.save()
+
+    const user = await User.findById(req.userId)
+    await logActivity({
+      userId: req.userId,
+      actorName: user?.name,
+      action: 'buyer_updated',
+      category: 'buyer',
+      description: `Updated buyer ${buyer.name || buyer.number}`,
+    })
+
+    res.json(toJSON(buyer))
+  } catch (err) {
+    console.error('Update buyer error:', err)
+    res.status(500).json({ error: 'Failed to update buyer' })
+  }
+})
+
 router.delete('/:id', async (req, res) => {
   try {
     const buyer = await Buyer.findOneAndDelete({ _id: req.params.id, userId: req.userId })

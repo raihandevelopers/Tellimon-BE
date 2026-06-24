@@ -7,7 +7,7 @@ const activityLogSchema = new mongoose.Schema(
     action: { type: String, required: true, index: true },
     category: {
       type: String,
-      enum: ['auth', 'buyer', 'campaign', 'blocked', 'call', 'system'],
+      enum: ['auth', 'buyer', 'campaign', 'blocked', 'call', 'did', 'system'],
       default: 'system',
     },
     description: { type: String, required: true },

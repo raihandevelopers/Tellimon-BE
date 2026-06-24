@@ -1,6 +1,7 @@
 import express from 'express'
 import mongoose from 'mongoose'
 import CallRecord from '../models/CallRecord.js'
+import LiveCall from '../models/LiveCall.js'
 import { authRequired } from '../middleware/auth.js'
 import { toJSON, toJSONList } from '../config/db.js'
 import { logActivity } from '../utils/logActivity.js'
@@ -66,6 +67,63 @@ router.get('/stats', authRequired, async (req, res) => {
   } catch (err) {
     console.error('Call stats error:', err)
     res.status(500).json({ error: 'Failed to fetch call stats' })
+  }
+})
+
+router.get('/live', authRequired, async (req, res) => {
+  try {
+    const cutoff = new Date(Date.now() - 45 * 1000)
+    const calls = await LiveCall.find({
+      userId: req.userId,
+      updatedAt: { $gte: cutoff },
+    }).sort({ startedAt: -1 })
+    res.json({ calls: toJSONList(calls), active: calls.length })
+  } catch (err) {
+    console.error('Live calls error:', err)
+    res.status(500).json({ error: 'Failed to fetch live calls' })
+  }
+})
+
+router.post('/live-sync', async (req, res) => {
+  try {
+    const secret = process.env.ASTERISK_WEBHOOK_SECRET
+    if (secret && req.headers['x-asterisk-secret'] !== secret) {
+      return res.status(401).json({ error: 'Unauthorized' })
+    }
+
+    const { userId, calls = [] } = req.body
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' })
+    }
+
+    const channelIds = calls.map((c) => c.channelId).filter(Boolean)
+
+    await LiveCall.deleteMany({
+      userId,
+      channelId: { $nin: channelIds },
+    })
+
+    for (const c of calls) {
+      if (!c.channelId) continue
+      await LiveCall.findOneAndUpdate(
+        { userId, channelId: c.channelId },
+        {
+          $set: {
+            caller: c.caller || '',
+            did: c.did || '',
+            buyerNumber: c.buyerNumber || '',
+            route: c.route || 'xolo-endpoint',
+            startedAt: c.startedAt ? new Date(c.startedAt) : new Date(),
+          },
+        },
+        { upsert: true, new: true }
+      )
+    }
+
+    res.json({ success: true, active: channelIds.length })
+  } catch (err) {
+    console.error('Live sync error:', err)
+    res.status(500).json({ error: 'Failed to sync live calls' })
   }
 })
 
