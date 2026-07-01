@@ -55,11 +55,8 @@ export async function customerCallFilter(userId, userRole, authUserId) {
   if (userRole === 'master') return {}
 
   const assigned = await getAssignedDidNumbers(userId, authUserId)
-  if (assigned.length) {
-    return { did: { $in: assigned } }
+  if (!assigned.length) {
+    return { did: { $in: ['__no_assigned_did__'] } }
   }
-
-  const mainNumbers = await getMainDidNumbers(userId)
-  if (!mainNumbers.length) return {}
-  return { did: { $nin: mainNumbers } }
+  return { did: { $in: assigned } }
 }

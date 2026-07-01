@@ -4,6 +4,7 @@ import Target from '../models/Target.js'
 import BlockedContact from '../models/BlockedContact.js'
 import CallRecord from '../models/CallRecord.js'
 import { authRequired } from '../middleware/auth.js'
+import { customerCallFilter } from '../utils/roles.js'
 
 const router = express.Router()
 
@@ -12,13 +13,18 @@ router.use(authRequired)
 router.get('/stats', async (req, res) => {
   try {
     const userId = req.userId
+    const callFilter = await customerCallFilter(userId, req.userRole, req.authUserId)
+    const base = { userId, ...callFilter }
     const [campaigns, targets, blocked, totalCalls, answered, missed] = await Promise.all([
       Campaign.countDocuments({ userId }),
       Target.countDocuments({ userId }),
       BlockedContact.countDocuments({ userId }),
-      CallRecord.countDocuments({ userId }),
-      CallRecord.countDocuments({ userId, status: 'answered' }),
-      CallRecord.countDocuments({ userId, status: { $in: ['missed', 'no-answer', 'busy'] } }),
+      CallRecord.countDocuments(base),
+      CallRecord.countDocuments({ ...base, status: 'answered' }),
+      CallRecord.countDocuments({
+        ...base,
+        status: { $in: ['missed', 'no-answer', 'failed'] },
+      }),
     ])
 
     res.json({
