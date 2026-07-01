@@ -11,48 +11,22 @@ import dashboardRoutes from './routes/dashboard.js'
 import callRoutes from './routes/calls.js'
 import activityLogRoutes from './routes/activityLogs.js'
 import didRoutes from './routes/dids.js'
-import routingRoutes from './routes/routing.js'
+import customerRoutes from './routes/customers.js'
 
 const app = express()
 const PORT = process.env.PORT || 5000
 
-const DEFAULT_CLIENT_URL =
-  'http://localhost:5173,https://tellimon-fe.vercel.app,https://hitechpbxworld.com,https://www.hitechpbxworld.com'
+const corsOrigins = (process.env.CLIENT_URL || 'http://localhost:5173')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
 
-function normalizeOrigin(origin) {
-  return origin?.trim().replace(/\/$/, '') || ''
-}
-
-const allowedOrigins = new Set(
-  (process.env.CLIENT_URL || DEFAULT_CLIENT_URL)
-    .split(',')
-    .map(normalizeOrigin)
-    .filter(Boolean)
-)
-
-function isAllowedOrigin(origin) {
-  if (!origin) return true
-  const normalized = normalizeOrigin(origin)
-  if (allowedOrigins.has(normalized)) return true
-  if (/^https:\/\/[\w.-]+\.vercel\.app$/.test(normalized)) return true
-  return false
-}
-
-app.use(
-  cors({
-    origin(origin, callback) {
-      if (isAllowedOrigin(origin)) {
-        callback(null, true)
-      } else {
-        callback(new Error(`CORS blocked: ${origin}`))
-      }
-    },
-    credentials: true,
-  })
-)
+app.use(cors({ origin: corsOrigins, credentials: true }))
 app.use(express.json())
 
-let ready = connectDB().then(() => ensureSeedData())
+let ready = connectDB().then(async () => {
+  await ensureSeedData()
+})
 
 app.use(async (_req, _res, next) => {
   try {
@@ -75,7 +49,7 @@ app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/calls', callRoutes)
 app.use('/api/activity-logs', activityLogRoutes)
 app.use('/api/dids', didRoutes)
-app.use('/api/routing', routingRoutes)
+app.use('/api/customers', customerRoutes)
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' })
@@ -91,9 +65,6 @@ if (!process.env.VERCEL) {
     app.listen(PORT, () => {
       console.log(`Tellimon API running on http://localhost:${PORT}`)
     })
-  }).catch((err) => {
-    console.error('Failed to start server:', err)
-    process.exit(1)
   })
 }
 

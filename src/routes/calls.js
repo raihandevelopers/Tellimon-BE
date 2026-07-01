@@ -7,6 +7,7 @@ import { toJSON, toJSONList } from '../config/db.js'
 import { logActivity } from '../utils/logActivity.js'
 import { updateRoutingAfterCall } from '../utils/routing.js'
 import Campaign from '../models/Campaign.js'
+import { customerCallFilter } from '../utils/roles.js'
 
 const router = express.Router()
 
@@ -30,6 +31,7 @@ function dedupeLiveCalls(calls) {
       continue
     }
 
+    // Keep the older startedAt so duration never jumps backward.
     const started = call.startedAt ? new Date(call.startedAt).getTime() : Infinity
     const existingStarted = existing.startedAt ? new Date(existing.startedAt).getTime() : Infinity
     if (started < existingStarted) map.set(key, call)
@@ -58,6 +60,7 @@ router.get('/recordings/:filename', authRequired, async (req, res) => {
     const ownsRecording = await CallRecord.findOne({
       userId: req.userId,
       recordingUrl: { $regex: filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') },
+      ...(await customerCallFilter(req.userId, req.userRole, req.authUserId)),
     })
     if (!ownsRecording) {
       return res.status(404).json({ error: 'Recording not found' })
@@ -83,7 +86,10 @@ router.get('/recordings/:filename', authRequired, async (req, res) => {
 router.get('/', authRequired, async (req, res) => {
   try {
     const { status, from, to, page = 1, limit = 20 } = req.query
-    const filter = { userId: req.userId }
+    const filter = {
+      userId: req.userId,
+      ...(await customerCallFilter(req.userId, req.userRole, req.authUserId)),
+    }
 
     if (status) filter.status = status
     if (from || to) {
@@ -113,12 +119,14 @@ router.get('/', authRequired, async (req, res) => {
 router.get('/stats', authRequired, async (req, res) => {
   try {
     const userId = req.userId
+    const extra = await customerCallFilter(userId, req.userRole, req.authUserId)
+    const base = { userId, ...extra }
     const [totalCalls, answered, missed, agg] = await Promise.all([
-      CallRecord.countDocuments({ userId }),
-      CallRecord.countDocuments({ userId, status: 'answered' }),
-      CallRecord.countDocuments({ userId, status: { $in: ['missed', 'no-answer', 'busy'] } }),
+      CallRecord.countDocuments(base),
+      CallRecord.countDocuments({ ...base, status: 'answered' }),
+      CallRecord.countDocuments({ ...base, status: { $in: ['missed', 'no-answer', 'busy'] } }),
       CallRecord.aggregate([
-        { $match: { userId: new mongoose.Types.ObjectId(userId) } },
+        { $match: { userId: new mongoose.Types.ObjectId(userId), ...extra } },
         { $group: { _id: null, totalSeconds: { $sum: '$billsec' } } },
       ]),
     ])
@@ -138,9 +146,11 @@ router.get('/stats', authRequired, async (req, res) => {
 router.get('/live', authRequired, async (req, res) => {
   try {
     const cutoff = new Date(Date.now() - 150 * 1000)
+    const extra = await customerCallFilter(req.userId, req.userRole, req.authUserId)
     const calls = await LiveCall.find({
       userId: req.userId,
       updatedAt: { $gte: cutoff },
+      ...extra,
     }).sort({ startedAt: -1 })
     const visible = dedupeLiveCalls(calls)
     res.json({ calls: toJSONList(visible), active: visible.length })

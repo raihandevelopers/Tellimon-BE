@@ -8,6 +8,8 @@ const didSchema = new mongoose.Schema(
     trunk: { type: String, default: '8138073157' },
     campaignId: { type: mongoose.Schema.Types.ObjectId, ref: 'Campaign' },
     buyerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Buyer' },
+    isMain: { type: Boolean, default: false },
+    assignedCustomerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
   },
   { timestamps: true }
 )
