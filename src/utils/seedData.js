@@ -15,8 +15,12 @@ export async function ensureSeedData() {
       email,
       password: hash,
       initials: 'DD',
+      role: 'master',
     })
     console.log('Seeded demo user:', email)
+  } else if (!user.role) {
+    user.role = 'master'
+    await user.save()
   }
 
   const targetCount = await Target.countDocuments({ userId: user._id })

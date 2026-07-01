@@ -55,7 +55,7 @@ router.post('/login', async (req, res) => {
 
 router.get('/me', authRequired, async (req, res) => {
   try {
-    const user = await User.findById(req.userId)
+    const user = await User.findById(req.authUserId)
     if (!user) return res.status(404).json({ error: 'User not found' })
     res.json({ user: publicUser(user) })
   } catch (err) {
