@@ -208,6 +208,10 @@ router.post('/webhook', async (req, res) => {
       }
     }
 
+    const seconds = Math.max(0, Number(billsec ?? duration ?? 0))
+    const end = endedAt ? new Date(endedAt) : new Date()
+    const start = startedAt ? new Date(startedAt) : new Date(end.getTime() - seconds * 1000)
+
     const call = await CallRecord.create({
       userId,
       caller: callerDigits,
@@ -221,8 +225,8 @@ router.post('/webhook', async (req, res) => {
       recordingUrl: recordingUrl || '',
       recordingPath: recordingPath || '',
       uniqueId: uniqueId || '',
-      startedAt: startedAt ? new Date(startedAt) : new Date(),
-      endedAt: endedAt ? new Date(endedAt) : new Date(),
+      startedAt: start,
+      endedAt: end,
     })
 
     await logActivity({
