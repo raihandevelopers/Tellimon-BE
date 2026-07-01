@@ -10,6 +10,34 @@ import Campaign from '../models/Campaign.js'
 
 const router = express.Router()
 
+function dedupeLiveCalls(calls) {
+  const map = new Map()
+  for (const call of calls) {
+    const did = String(call.did || '').replace(/\D/g, '')
+    const caller = String(call.caller || '').replace(/\D/g, '')
+    const key = (did && caller ? `${did}:${caller}` : '') || call.channelId || call.id
+    const existing = map.get(key)
+    const hasDid = Boolean(did)
+
+    if (!existing) {
+      map.set(key, call)
+      continue
+    }
+
+    const existingHasDid = Boolean(String(existing.did || '').replace(/\D/g, ''))
+    if (hasDid && !existingHasDid) {
+      map.set(key, call)
+      continue
+    }
+
+    const started = call.startedAt ? new Date(call.startedAt).getTime() : Infinity
+    const existingStarted = existing.startedAt ? new Date(existing.startedAt).getTime() : Infinity
+    if (started < existingStarted) map.set(key, call)
+  }
+
+  return [...map.values()].filter((call) => Boolean(String(call.did || '').replace(/\D/g, '')))
+}
+
 function formatDuration(seconds) {
   const s = Math.max(0, Number(seconds) || 0)
   const m = Math.floor(s / 60)
@@ -109,12 +137,13 @@ router.get('/stats', authRequired, async (req, res) => {
 
 router.get('/live', authRequired, async (req, res) => {
   try {
-    const cutoff = new Date(Date.now() - 45 * 1000)
+    const cutoff = new Date(Date.now() - 150 * 1000)
     const calls = await LiveCall.find({
       userId: req.userId,
       updatedAt: { $gte: cutoff },
     }).sort({ startedAt: -1 })
-    res.json({ calls: toJSONList(calls), active: calls.length })
+    const visible = dedupeLiveCalls(calls)
+    res.json({ calls: toJSONList(visible), active: visible.length })
   } catch (err) {
     console.error('Live calls error:', err)
     res.status(500).json({ error: 'Failed to fetch live calls' })
@@ -142,6 +171,7 @@ router.post('/live-sync', async (req, res) => {
 
     for (const c of calls) {
       if (!c.channelId) continue
+      const startedAt = c.startedAt ? new Date(c.startedAt) : new Date()
       await LiveCall.findOneAndUpdate(
         { userId, channelId: c.channelId },
         {
@@ -150,8 +180,8 @@ router.post('/live-sync', async (req, res) => {
             did: c.did || '',
             buyerNumber: c.buyerNumber || '',
             route: c.route || 'xolo-endpoint',
-            startedAt: c.startedAt ? new Date(c.startedAt) : new Date(),
           },
+          $setOnInsert: { startedAt },
         },
         { upsert: true, new: true }
       )
