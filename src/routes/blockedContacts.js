@@ -2,8 +2,8 @@ import express from 'express'
 import BlockedContact from '../models/BlockedContact.js'
 import { authRequired } from '../middleware/auth.js'
 import { toJSON, toJSONList } from '../config/db.js'
-import User from '../models/User.js'
 import { logActivity } from '../utils/logActivity.js'
+import { normalizePhoneNumber, syncAsteriskConfig } from '../utils/syncAsterisk.js'
 
 const router = express.Router()
 
@@ -21,33 +21,31 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { number } = req.body
-    if (!number?.trim()) {
+    const number = normalizePhoneNumber(req.body?.number)
+    if (!number) {
       return res.status(400).json({ error: 'Number is required' })
     }
 
-    const existing = await BlockedContact.findOne({ userId: req.userId, number: number.trim() })
+    const existing = await BlockedContact.findOne({ userId: req.userId, number })
     if (existing) {
       return res.status(409).json({ error: 'Number already blocked' })
     }
 
     const contact = await BlockedContact.create({
       userId: req.userId,
-      number: number.trim(),
+      number,
       status: 'Active',
     })
 
-    const user = await User.findById(req.userId)
-    await logActivity({
-      userId: req.userId,
-      actorName: user?.name,
+    await logActivity(req.userId, {
       action: 'contact_blocked',
       category: 'blocked',
-      description: `Blocked number ${number.trim()}`,
-      metadata: { number: number.trim() },
+      description: `Blocked ${contact.number}`,
     })
 
-    res.status(201).json(toJSON(contact))
+    const synced = await syncAsteriskConfig()
+
+    res.status(201).json({ ...toJSON(contact), asteriskSynced: synced })
   } catch (err) {
     console.error('Create blocked contact error:', err)
     res.status(500).json({ error: 'Failed to block contact' })
@@ -59,17 +57,15 @@ router.delete('/:id', async (req, res) => {
     const contact = await BlockedContact.findOneAndDelete({ _id: req.params.id, userId: req.userId })
     if (!contact) return res.status(404).json({ error: 'Contact not found' })
 
-    const user = await User.findById(req.userId)
-    await logActivity({
-      userId: req.userId,
-      actorName: user?.name,
+    await logActivity(req.userId, {
       action: 'contact_unblocked',
       category: 'blocked',
-      description: `Removed blocked number ${contact.number}`,
-      metadata: { number: contact.number },
+      description: `Unblocked ${contact.number}`,
     })
 
-    res.json({ success: true })
+    const synced = await syncAsteriskConfig()
+
+    res.json({ success: true, asteriskSynced: synced })
   } catch (err) {
     console.error('Delete blocked contact error:', err)
     res.status(500).json({ error: 'Failed to remove blocked contact' })
