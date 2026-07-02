@@ -65,7 +65,11 @@ function istDayEnd(dateStr) {
 function buildCallListFilter({ status, from, to, number }) {
   const filter = {}
 
-  if (status) filter.status = status
+  if (status === 'missed') {
+    filter.status = { $in: ['missed', 'no-answer', 'busy'] }
+  } else if (status) {
+    filter.status = status
+  }
 
   const dateParts = []
   const start = from ? istDayStart(from) : null
