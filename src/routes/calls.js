@@ -50,6 +50,45 @@ function formatDuration(seconds) {
 const RECORDINGS_BASE =
   process.env.RECORDINGS_BASE_URL || 'http://91.108.104.221/recordings'
 
+function istDayStart(dateStr) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || ''))) return null
+  const d = new Date(`${dateStr}T00:00:00+05:30`)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+function istDayEnd(dateStr) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || ''))) return null
+  const d = new Date(`${dateStr}T23:59:59.999+05:30`)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+function buildCallListFilter({ status, from, to, number }) {
+  const filter = {}
+
+  if (status) filter.status = status
+
+  const dateParts = []
+  const start = from ? istDayStart(from) : null
+  const end = to ? istDayEnd(to) : null
+  if (start) {
+    dateParts.push({ $gte: [{ $ifNull: ['$startedAt', '$createdAt'] }, start] })
+  }
+  if (end) {
+    dateParts.push({ $lte: [{ $ifNull: ['$startedAt', '$createdAt'] }, end] })
+  }
+  if (dateParts.length) {
+    filter.$expr = dateParts.length === 1 ? dateParts[0] : { $and: dateParts }
+  }
+
+  const digits = String(number || '').replace(/\D/g, '')
+  if (digits) {
+    const regex = new RegExp(digits)
+    filter.$or = [{ caller: regex }, { did: regex }, { buyerNumber: regex }]
+  }
+
+  return filter
+}
+
 router.get('/recordings/:filename', authRequired, async (req, res) => {
   try {
     const filename = String(req.params.filename || '')
@@ -85,22 +124,19 @@ router.get('/recordings/:filename', authRequired, async (req, res) => {
 
 router.get('/', authRequired, async (req, res) => {
   try {
-    const { status, from, to, page = 1, limit = 20 } = req.query
+    const { status, from, to, number, page = 1, limit = 20 } = req.query
     const filter = {
       userId: req.userId,
       ...(await customerCallFilter(req.userId, req.userRole, req.authUserId)),
-    }
-
-    if (status) filter.status = status
-    if (from || to) {
-      filter.createdAt = {}
-      if (from) filter.createdAt.$gte = new Date(from)
-      if (to) filter.createdAt.$lte = new Date(to)
+      ...buildCallListFilter({ status, from, to, number }),
     }
 
     const skip = (Math.max(1, Number(page)) - 1) * Number(limit)
     const [calls, total] = await Promise.all([
-      CallRecord.find(filter).sort({ createdAt: -1 }).skip(skip).limit(Number(limit)),
+      CallRecord.find(filter)
+        .sort({ startedAt: -1, createdAt: -1 })
+        .skip(skip)
+        .limit(Number(limit)),
       CallRecord.countDocuments(filter),
     ])
 
@@ -108,7 +144,7 @@ router.get('/', authRequired, async (req, res) => {
       calls: toJSONList(calls).map((c) => ({ ...c, durationFormatted: formatDuration(c.billsec || c.duration) })),
       total,
       page: Number(page),
-      totalPages: Math.ceil(total / Number(limit)),
+      totalPages: Math.ceil(total / Number(limit)) || 1,
     })
   } catch (err) {
     console.error('List calls error:', err)
