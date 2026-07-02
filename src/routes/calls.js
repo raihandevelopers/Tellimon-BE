@@ -217,7 +217,23 @@ router.post('/live-sync', async (req, res) => {
 
     for (const c of calls) {
       if (!c.channelId) continue
-      const startedAt = c.startedAt ? new Date(c.startedAt) : new Date()
+      const incomingStart = c.startedAt ? new Date(c.startedAt) : new Date()
+      const existing = await LiveCall.findOne({ userId, channelId: c.channelId })
+      let startedAt = incomingStart
+      if (existing?.startedAt) {
+        const prevMs = new Date(existing.startedAt).getTime()
+        const prevAge = Date.now() - prevMs
+        const incomingAge = Date.now() - incomingStart.getTime()
+        const prevValid = Number.isFinite(prevAge) && prevAge >= 0 && prevAge < 6 * 60 * 60 * 1000
+        const incomingValid = Number.isFinite(incomingAge) && incomingAge >= 0 && incomingAge < 6 * 60 * 60 * 1000
+        if (prevValid) {
+          startedAt = existing.startedAt
+        } else if (incomingValid) {
+          startedAt = incomingStart
+        } else {
+          startedAt = new Date()
+        }
+      }
       await LiveCall.findOneAndUpdate(
         { userId, channelId: c.channelId },
         {
@@ -226,8 +242,8 @@ router.post('/live-sync', async (req, res) => {
             did: c.did || '',
             buyerNumber: c.buyerNumber || '',
             route: c.route || 'xolo-endpoint',
+            startedAt,
           },
-          $setOnInsert: { startedAt },
         },
         { upsert: true, new: true }
       )
