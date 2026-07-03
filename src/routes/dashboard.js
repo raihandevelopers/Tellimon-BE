@@ -5,6 +5,7 @@ import BlockedContact from '../models/BlockedContact.js'
 import CallRecord from '../models/CallRecord.js'
 import { authRequired } from '../middleware/auth.js'
 import { customerCallFilter } from '../utils/roles.js'
+import { getIstBusinessDayBounds, callPeriodExprFilter } from '../utils/istDayBounds.js'
 
 const router = express.Router()
 
@@ -14,7 +15,10 @@ router.get('/stats', async (req, res) => {
   try {
     const userId = req.userId
     const callFilter = await customerCallFilter(userId, req.userRole, req.authUserId)
-    const base = { userId, ...callFilter }
+    const period = getIstBusinessDayBounds()
+    const periodFilter = callPeriodExprFilter(period.start, period.end)
+    const base = { userId, ...callFilter, ...periodFilter }
+
     const [campaigns, targets, blocked, totalCalls, answered, missed] = await Promise.all([
       Campaign.countDocuments({ userId }),
       Target.countDocuments({ userId }),
@@ -34,6 +38,12 @@ router.get('/stats', async (req, res) => {
       totalCalls,
       answered,
       missed,
+      period: {
+        start: period.start.toISOString(),
+        end: period.end.toISOString(),
+        label: period.label,
+        resetHour: period.resetHour,
+      },
     })
   } catch (err) {
     console.error('Dashboard stats error:', err)
