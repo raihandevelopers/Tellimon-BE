@@ -3,31 +3,19 @@ import DID from '../models/DID.js'
 import WalletTransaction from '../models/WalletTransaction.js'
 import { didNumberVariants } from './roles.js'
 
-export const DEFAULT_WALLET_CALL_RATES = {
-  answeredPerMinute: 1,
-  missed: 1,
-  noAnswer: 1,
-  busy: 1,
-  failed: 1,
-}
+export const DEFAULT_WALLET_RATE_PER_CALL = 1
 
 function roundAmount(value) {
   return Math.round(Number(value) * 100) / 100
 }
 
 export function normalizeWalletCallRates(raw = {}) {
-  const pick = (key, fallback) => {
-    const value = Number(raw[key])
-    return Number.isFinite(value) && value >= 0 ? roundAmount(value) : fallback
+  let value = Number(raw.perCall)
+  if (!Number.isFinite(value) || value < 0) {
+    value = Number(raw.answeredPerMinute ?? raw.missed ?? DEFAULT_WALLET_RATE_PER_CALL)
   }
-
-  return {
-    answeredPerMinute: pick('answeredPerMinute', DEFAULT_WALLET_CALL_RATES.answeredPerMinute),
-    missed: pick('missed', DEFAULT_WALLET_CALL_RATES.missed),
-    noAnswer: pick('noAnswer', DEFAULT_WALLET_CALL_RATES.noAnswer),
-    busy: pick('busy', DEFAULT_WALLET_CALL_RATES.busy),
-    failed: pick('failed', DEFAULT_WALLET_CALL_RATES.failed),
-  }
+  if (!Number.isFinite(value) || value < 0) value = DEFAULT_WALLET_RATE_PER_CALL
+  return { perCall: roundAmount(value) }
 }
 
 export async function getTenantWalletCallRates(tenantUserId) {
@@ -35,24 +23,9 @@ export async function getTenantWalletCallRates(tenantUserId) {
   return normalizeWalletCallRates(master?.walletCallRates)
 }
 
-export function callChargeAmount(billsec = 0, status = '', rates = null) {
-  const r = normalizeWalletCallRates(rates)
-  const normalizedStatus = String(status || 'missed').toLowerCase()
-
-  if (normalizedStatus === 'answered') {
-    const seconds = Math.max(0, Number(billsec) || 0)
-    const minutes = seconds > 0 ? Math.max(1, Math.ceil(seconds / 60)) : 1
-    return roundAmount(minutes * r.answeredPerMinute)
-  }
-
-  const flatRates = {
-    missed: r.missed,
-    'no-answer': r.noAnswer,
-    busy: r.busy,
-    failed: r.failed,
-  }
-
-  return flatRates[normalizedStatus] ?? r.missed
+export function callChargeAmount(_billsec = 0, _status = '', rates = null) {
+  const { perCall } = normalizeWalletCallRates(rates)
+  return perCall > 0 ? perCall : 0
 }
 
 export async function getWalletBalance(customerId) {
@@ -122,8 +95,7 @@ export async function debitForCall({
 
   const rates = await getTenantWalletCallRates(tenantUserId)
   const customerId = didRecord.assignedCustomerId
-  const callStatus = status || 'missed'
-  const amount = callChargeAmount(billsec, callStatus, rates)
+  const amount = callChargeAmount(billsec, status, rates)
   if (amount <= 0) return null
 
   const existing = await WalletTransaction.findOne({
@@ -148,7 +120,7 @@ export async function debitForCall({
     callId,
     did: didRecord.number,
     billsec: Math.max(0, Number(billsec) || 0),
-    description: `Call charge — ${didRecord.number} (${callStatus}, ${billsec || 0}s)`,
+    description: `Call charge — ${didRecord.number} (₹${amount}/call)`,
     actorName: 'System',
   })
 

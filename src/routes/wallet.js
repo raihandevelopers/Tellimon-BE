@@ -129,7 +129,7 @@ router.put('/rates', requireMaster, async (req, res) => {
     const master = await User.findById(req.authUserId)
     if (!master) return res.status(404).json({ error: 'User not found' })
 
-    const callRates = normalizeWalletCallRates({ ...master.walletCallRates?.toObject?.() ?? master.walletCallRates, ...req.body })
+    const callRates = normalizeWalletCallRates({ perCall: req.body.perCall })
     master.walletCallRates = callRates
     await master.save()
 
