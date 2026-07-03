@@ -6,7 +6,7 @@ import { authRequired } from '../middleware/auth.js'
 import { toJSON, toJSONList } from '../config/db.js'
 import { logActivity } from '../utils/logActivity.js'
 import { customerCallFilter } from '../utils/roles.js'
-import { buildCallDateFilter } from '../utils/callFilters.js'
+import { buildCallListFilter } from '../utils/callFilters.js'
 
 const router = express.Router()
 
@@ -31,16 +31,17 @@ function formatTalkTime(seconds) {
 
 router.get('/reports', async (req, res) => {
   try {
-    const { from, to } = req.query
+    const { from, to, status } = req.query
     const userId = req.userId
     const customerFilter = await customerCallFilter(userId, req.userRole, req.authUserId)
-    const dateFilter = buildCallDateFilter({ from, to })
+    const callFilter = buildCallListFilter({ from, to, status })
 
     const match = {
       userId: new mongoose.Types.ObjectId(userId),
       ...customerFilter,
     }
-    if (dateFilter.$expr) match.$expr = dateFilter.$expr
+    if (callFilter.status) match.status = callFilter.status
+    if (callFilter.$expr) match.$expr = callFilter.$expr
 
     const [buyers, grouped] = await Promise.all([
       Buyer.find({ userId }).sort({ priority: 1, name: 1, createdAt: -1 }),
@@ -111,6 +112,7 @@ router.get('/reports', async (req, res) => {
       reports,
       from: from || null,
       to: to || null,
+      status: status || null,
       totalCalls: reports.reduce((sum, r) => sum + r.totalCalls, 0),
     })
   } catch (err) {
