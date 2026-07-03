@@ -67,6 +67,12 @@ function buildCallListFilter({ status, from, to, number }) {
 
   if (status === 'missed') {
     filter.status = { $in: ['missed', 'no-answer', 'busy'] }
+  } else if (status === 'unanswered') {
+    filter.status = { $in: ['no-answer', 'busy'] }
+  } else if (status === 'missed-only') {
+    filter.status = { $in: ['missed', 'failed'] }
+  } else if (status === 'answered') {
+    filter.status = 'answered'
   } else if (status) {
     filter.status = status
   }
