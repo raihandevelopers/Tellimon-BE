@@ -19,8 +19,8 @@ export function isBuyerEligible(buyer, { callsToday = 0, activeCalls = 0 } = {})
   if (!buyer || buyer.status !== 'Active') return false
   const cap = Number(buyer.dailyCap) || 0
   if (cap > 0 && callsToday >= cap) return false
-  const maxConcurrent = Number(buyer.concurrentCalls) || 1
-  if (maxConcurrent > 0 && activeCalls >= maxConcurrent) return false
+  const maxConcurrent = Number(buyer.concurrentCalls)
+  if (Number.isFinite(maxConcurrent) && maxConcurrent > 0 && activeCalls >= maxConcurrent) return false
   return Boolean(normalizeDigits(buyer.number))
 }
 
@@ -58,6 +58,7 @@ function pickFromPool(pool, strategy, campaignId, state, caller, stickyMap) {
       const sticky = pool.find((b) => String(b.id || b._id) === String(stickyId))
       if (sticky) return sticky
     }
+    return [...pool].sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0))[0]
   }
 
   if (strategy === 'Priority') {

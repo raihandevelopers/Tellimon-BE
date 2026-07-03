@@ -39,13 +39,14 @@ router.post('/login', async (req, res) => {
     }
 
     const token = signToken(user._id)
-    await logActivity({
-      userId: user._id,
-      actorName: user.name,
+
+    await logActivity(user._id, {
       action: 'login',
       category: 'auth',
-      description: `${user.name} signed in`,
+      description: `${user.name || user.email} signed in`,
+      actorName: user.name || user.email,
     })
+
     res.json({ token, user: publicUser(user) })
   } catch (err) {
     console.error('Login error:', err)

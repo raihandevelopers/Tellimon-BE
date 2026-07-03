@@ -6,6 +6,7 @@ import { toJSON, toJSONList } from '../config/db.js'
 import { isMaster } from '../utils/roles.js'
 import { creditWallet, getWalletBalance, getTenantWalletCallRates, normalizeWalletCallRates } from '../utils/wallet.js'
 import { logActivity } from '../utils/logActivity.js'
+import { loadCustomerDidDisplayMap, maskCallForCustomer } from '../utils/customerDidDisplay.js'
 
 const router = express.Router()
 
@@ -29,13 +30,13 @@ router.get('/', async (req, res) => {
       const totalBalance = customers.reduce((sum, c) => sum + Number(c.walletBalance || 0), 0)
       return res.json({
         role: 'master',
-        totalCustomerBalance: Math.round(totalBalance * 100) / 100,
+        totalCustomerBalance: Math.round(totalBalance * 1e6) / 1e6,
         callRates,
         customers: customers.map((c) => ({
           id: String(c._id),
           name: c.name,
           email: c.email,
-          balance: Math.round(Number(c.walletBalance || 0) * 100) / 100,
+          balance: Math.round(Number(c.walletBalance || 0) * 1e6) / 1e6,
         })),
       })
     }
@@ -73,8 +74,14 @@ router.get('/transactions', async (req, res) => {
       WalletTransaction.countDocuments(filter),
     ])
 
+    let list = toJSONList(transactions)
+    if (!isMaster(req.userRole)) {
+      const displayMap = await loadCustomerDidDisplayMap(req.userId, req.authUserId)
+      list = list.map((tx) => maskCallForCustomer(tx, displayMap))
+    }
+
     res.json({
-      transactions: toJSONList(transactions),
+      transactions: list,
       total,
       page: Number(page),
       totalPages: Math.ceil(total / Number(limit)) || 1,
@@ -129,7 +136,9 @@ router.put('/rates', requireMaster, async (req, res) => {
     const master = await User.findById(req.authUserId)
     if (!master) return res.status(404).json({ error: 'User not found' })
 
-    const callRates = normalizeWalletCallRates({ perCall: req.body.perCall })
+    const callRates = normalizeWalletCallRates({
+      perMinute: req.body.perMinute ?? req.body.perCall,
+    })
     master.walletCallRates = callRates
     await master.save()
 

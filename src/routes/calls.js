@@ -7,7 +7,8 @@ import { toJSON, toJSONList } from '../config/db.js'
 import { logActivity } from '../utils/logActivity.js'
 import { updateRoutingAfterCall } from '../utils/routing.js'
 import Campaign from '../models/Campaign.js'
-import { customerCallFilter } from '../utils/roles.js'
+import { customerCallFilter, isMaster } from '../utils/roles.js'
+import { loadCustomerDidDisplayMap, maskCallForCustomer } from '../utils/customerDidDisplay.js'
 import { debitForCall } from '../utils/wallet.js'
 import { buildCallListFilter } from '../utils/callFilters.js'
 
@@ -103,8 +104,17 @@ router.get('/', authRequired, async (req, res) => {
       CallRecord.countDocuments(filter),
     ])
 
+    let list = toJSONList(calls).map((c) => ({
+      ...c,
+      durationFormatted: formatDuration(c.billsec || c.duration),
+    }))
+    if (!isMaster(req.userRole)) {
+      const displayMap = await loadCustomerDidDisplayMap(req.userId, req.authUserId)
+      list = list.map((c) => maskCallForCustomer(c, displayMap))
+    }
+
     res.json({
-      calls: toJSONList(calls).map((c) => ({ ...c, durationFormatted: formatDuration(c.billsec || c.duration) })),
+      calls: list,
       total,
       page: Number(page),
       totalPages: Math.ceil(total / Number(limit)) || 1,
@@ -152,7 +162,12 @@ router.get('/live', authRequired, async (req, res) => {
       ...extra,
     }).sort({ startedAt: -1 })
     const visible = dedupeLiveCalls(calls)
-    res.json({ calls: toJSONList(visible), active: visible.length })
+    let list = toJSONList(visible)
+    if (!isMaster(req.userRole)) {
+      const displayMap = await loadCustomerDidDisplayMap(req.userId, req.authUserId)
+      list = list.map((c) => maskCallForCustomer(c, displayMap))
+    }
+    res.json({ calls: list, active: visible.length })
   } catch (err) {
     console.error('Live calls error:', err)
     res.status(500).json({ error: 'Failed to fetch live calls' })

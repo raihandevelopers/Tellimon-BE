@@ -9,34 +9,37 @@ router.use(authRequired)
 
 router.get('/', async (req, res) => {
   try {
-    const { category, action, search, page = 1, limit = 20 } = req.query
-    const filter = { userId: req.userId }
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1)
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10))
+    const skip = (page - 1) * limit
 
-    if (category) filter.category = category
-    if (action) filter.action = action
-    if (search?.trim()) {
-      const q = search.trim()
+    const filter = { userId: req.userId }
+    if (req.query.category && req.query.category !== 'all') {
+      filter.category = req.query.category
+    }
+    if (req.query.search?.trim()) {
+      const q = req.query.search.trim()
       filter.$or = [
         { description: { $regex: q, $options: 'i' } },
-        { actorName: { $regex: q, $options: 'i' } },
         { action: { $regex: q, $options: 'i' } },
+        { actorName: { $regex: q, $options: 'i' } },
       ]
     }
 
-    const skip = (Math.max(1, Number(page)) - 1) * Number(limit)
     const [logs, total] = await Promise.all([
-      ActivityLog.find(filter).sort({ createdAt: -1 }).skip(skip).limit(Number(limit)),
+      ActivityLog.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
       ActivityLog.countDocuments(filter),
     ])
 
     res.json({
       logs: toJSONList(logs),
       total,
-      page: Number(page),
-      totalPages: Math.ceil(total / Number(limit)) || 1,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
     })
   } catch (err) {
-    console.error('List activity logs error:', err)
+    console.error('Activity logs error:', err)
     res.status(500).json({ error: 'Failed to fetch activity logs' })
   }
 })

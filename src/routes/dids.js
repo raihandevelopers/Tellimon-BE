@@ -8,6 +8,12 @@ import { authRequired } from '../middleware/auth.js'
 import { toJSON } from '../config/db.js'
 import { logActivity } from '../utils/logActivity.js'
 import { isMaster, normalizeDidNumber, customerDidQuery } from '../utils/roles.js'
+import {
+  loadCustomerDidDisplayMap,
+  maskCallForCustomer,
+  sanitizeDidJsonForCustomer,
+  sanitizeDidJsonForMaster,
+} from '../utils/customerDidDisplay.js'
 import { syncAsteriskConfig } from '../utils/syncAsterisk.js'
 
 const router = express.Router()
@@ -71,7 +77,10 @@ router.get('/', async (req, res) => {
         json.customerName = customer?.name || null
         json.customerEmail = customer?.email || null
         json.callsToday = await callsTodayForDid(req.userId, d.number)
-        return json
+        if (isMaster(req.userRole)) {
+          return sanitizeDidJsonForMaster(json)
+        }
+        return sanitizeDidJsonForCustomer(json)
       })
     )
     res.json(enriched)
@@ -83,7 +92,8 @@ router.get('/', async (req, res) => {
 
 router.post('/', requireMaster, async (req, res) => {
   try {
-    const { number, status, trunk, campaignId, buyerId, isMain, assignedCustomerId } = req.body
+    const { number, status, trunk, campaignId, buyerId, isMain, assignedCustomerId, customerDisplayNumber } =
+      req.body
     const normalized = normalizeDidNumber(number)
     if (!normalized) {
       return res.status(400).json({ error: 'DID number is required' })
@@ -118,6 +128,10 @@ router.post('/', requireMaster, async (req, res) => {
       buyerId: buyerId || undefined,
       isMain: isMainDid,
       assignedCustomerId: isMainDid ? undefined : assignedCustomer?._id,
+      customerDisplayNumber:
+        !isMainDid && assignedCustomer && customerDisplayNumber
+          ? String(customerDisplayNumber).trim()
+          : '',
     })
 
     const user = await User.findById(req.authUserId || req.userId)
@@ -146,7 +160,8 @@ router.post('/', requireMaster, async (req, res) => {
 
 router.put('/:id', requireMaster, async (req, res) => {
   try {
-    const { status, trunk, campaignId, buyerId, isMain, assignedCustomerId } = req.body
+    const { status, trunk, campaignId, buyerId, isMain, assignedCustomerId, customerDisplayNumber } =
+      req.body
     const did = await DID.findOne({ _id: req.params.id, userId: req.userId })
     if (!did) return res.status(404).json({ error: 'DID not found' })
     if (!assertCanAccessMainDid(req, did)) {
@@ -158,7 +173,10 @@ router.put('/:id', requireMaster, async (req, res) => {
         return res.status(403).json({ error: 'Only master accounts can change main DID status' })
       }
       did.isMain = Boolean(isMain)
-      if (did.isMain) did.assignedCustomerId = undefined
+      if (did.isMain) {
+        did.assignedCustomerId = undefined
+        did.customerDisplayNumber = ''
+      }
     }
 
     if (campaignId !== undefined) {
@@ -185,7 +203,11 @@ router.put('/:id', requireMaster, async (req, res) => {
         did.assignedCustomerId = customer._id
       } else {
         did.assignedCustomerId = undefined
+        did.customerDisplayNumber = ''
       }
+    }
+    if (customerDisplayNumber !== undefined) {
+      did.customerDisplayNumber = String(customerDisplayNumber || '').trim()
     }
     if (status) did.status = status
     if (trunk !== undefined) did.trunk = trunk

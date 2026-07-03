@@ -10,7 +10,7 @@ const userSchema = new mongoose.Schema(
     ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     walletBalance: { type: Number, default: 0 },
     walletCallRates: {
-      perCall: { type: Number, default: 1 },
+      perMinute: { type: Number, default: 0.0024 },
     },
   },
   { timestamps: true }

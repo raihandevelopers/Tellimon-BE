@@ -4,7 +4,7 @@ import Campaign from '../models/Campaign.js'
 import DID from '../models/DID.js'
 import RoutingState from '../models/RoutingState.js'
 import { authRequired } from '../middleware/auth.js'
-import { toJSON, toJSONList } from '../config/db.js'
+import { toJSONList } from '../config/db.js'
 import { getBuyerCallCountsToday, normalizeDigits, resolveBuyer } from '../utils/routing.js'
 
 const router = express.Router()

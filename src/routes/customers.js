@@ -32,34 +32,69 @@ async function ownedCustomer(masterId, customerId) {
 
 async function enrichCustomer(customer) {
   const json = publicCustomer(customer)
-  json.walletBalance = Math.round(Number(customer.walletBalance || 0) * 100) / 100
-  const dids = await DID.find({ assignedCustomerId: customer._id }).select('number status id')
+  json.walletBalance = Math.round(Number(customer.walletBalance || 0) * 1e6) / 1e6
+  const dids = await DID.find({ assignedCustomerId: customer._id }).select(
+    'number status id customerDisplayNumber'
+  )
   json.assignedDids = dids.map((d) => ({
     id: String(d._id),
     number: d.number,
+    displayNumber: d.customerDisplayNumber || '',
     status: d.status,
   }))
   return json
 }
 
-async function setCustomerDids(masterTenantId, customerId, didIds = []) {
+function parseDidAssignments(body) {
+  if (Array.isArray(body.didAssignments)) {
+    return body.didAssignments
+      .filter((a) => a?.didId)
+      .map((a) => ({
+        didId: String(a.didId),
+        displayNumber: String(a.displayNumber || '').trim(),
+      }))
+  }
+  if (Array.isArray(body.didIds)) {
+    return body.didIds.map((id) => ({ didId: String(id), displayNumber: '' }))
+  }
+  return undefined
+}
+
+async function setCustomerDids(masterTenantId, customerId, didAssignments = []) {
+  const uniqueIds = [...new Set((didAssignments || []).map((a) => String(a.didId)).filter(Boolean))]
+
+  // Drop this customer's current assignments first.
   await DID.updateMany(
     { userId: masterTenantId, assignedCustomerId: customerId },
-    { $unset: { assignedCustomerId: 1 } }
+    { $unset: { assignedCustomerId: 1, customerDisplayNumber: 1 } }
   )
 
-  if (!didIds?.length) return
+  if (!uniqueIds.length) return
 
-  const uniqueIds = [...new Set(didIds.map(String))]
-  const dids = await DID.find({ _id: { $in: uniqueIds }, userId: masterTenantId })
+  const dids = await DID.find({
+    _id: { $in: uniqueIds },
+    userId: masterTenantId,
+    isMain: { $ne: true },
+  })
   if (dids.length !== uniqueIds.length) {
     throw new Error('INVALID_DIDS')
   }
 
+  // Clear these DIDs from any other customer before reassigning.
   await DID.updateMany(
-    { _id: { $in: uniqueIds }, userId: masterTenantId },
-    { $set: { assignedCustomerId: customerId } }
+    { userId: masterTenantId, _id: { $in: uniqueIds } },
+    { $unset: { assignedCustomerId: 1, customerDisplayNumber: 1 } }
   )
+
+  for (const { didId, displayNumber } of didAssignments) {
+    const update = { assignedCustomerId: customerId }
+    if (displayNumber) {
+      update.customerDisplayNumber = displayNumber
+    } else {
+      update.customerDisplayNumber = ''
+    }
+    await DID.updateOne({ _id: didId, userId: masterTenantId }, { $set: update })
+  }
 }
 
 router.get('/', async (req, res) => {
@@ -77,7 +112,7 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { name, email, password, didIds } = req.body
+    const { name, email, password, didIds, didAssignments } = req.body
     if (!name?.trim() || !email?.trim() || !password) {
       return res.status(400).json({ error: 'Name, email, and password are required' })
     }
@@ -106,8 +141,9 @@ router.post('/', async (req, res) => {
       ownerId: req.authUserId,
     })
 
+    const assignments = parseDidAssignments({ didIds, didAssignments })
     try {
-      await setCustomerDids(req.userId, customer._id, didIds)
+      await setCustomerDids(req.userId, customer._id, assignments ?? [])
     } catch {
       await User.findByIdAndDelete(customer._id)
       return res.status(400).json({ error: 'One or more DIDs could not be assigned' })
@@ -134,14 +170,15 @@ router.put('/:id', async (req, res) => {
     const customer = await ownedCustomer(req.authUserId, req.params.id)
     if (!customer) return res.status(404).json({ error: 'Customer not found' })
 
-    const { name, password, didIds } = req.body
+    const { name, password, didIds, didAssignments } = req.body
     if (name?.trim()) customer.name = name.trim()
     if (password) customer.password = await bcrypt.hash(password, 10)
     await customer.save()
 
-    if (didIds !== undefined) {
+    if (didIds !== undefined || didAssignments !== undefined) {
+      const assignments = parseDidAssignments({ didIds, didAssignments })
       try {
-        await setCustomerDids(req.userId, customer._id, didIds)
+        await setCustomerDids(req.userId, customer._id, assignments ?? [])
       } catch {
         return res.status(400).json({ error: 'One or more DIDs could not be assigned' })
       }
@@ -170,7 +207,7 @@ router.delete('/:id', async (req, res) => {
 
     await DID.updateMany(
       { userId: req.userId, assignedCustomerId: customer._id },
-      { $unset: { assignedCustomerId: 1 } }
+      { $unset: { assignedCustomerId: 1, customerDisplayNumber: 1 } }
     )
     await User.findByIdAndDelete(customer._id)
 

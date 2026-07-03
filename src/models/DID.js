@@ -10,6 +10,7 @@ const didSchema = new mongoose.Schema(
     buyerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Buyer' },
     isMain: { type: Boolean, default: false },
     assignedCustomerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+    customerDisplayNumber: { type: String, default: '', trim: true },
   },
   { timestamps: true }
 )
