@@ -1,7 +1,25 @@
 import ActivityLog from '../models/ActivityLog.js'
 import User from '../models/User.js'
 
-export async function logActivity(userId, { action, category, description, actorName, metadata }) {
+function normalizeArgs(userIdOrPayload, maybePayload) {
+  if (
+    userIdOrPayload &&
+    typeof userIdOrPayload === 'object' &&
+    userIdOrPayload.userId != null &&
+    maybePayload === undefined
+  ) {
+    const { userId, ...rest } = userIdOrPayload
+    return { userId, payload: rest }
+  }
+  return { userId: userIdOrPayload, payload: maybePayload || {} }
+}
+
+export async function logActivity(userIdOrPayload, maybePayload) {
+  const { userId, payload } = normalizeArgs(userIdOrPayload, maybePayload)
+  const { action, category, description, actorName, metadata } = payload
+
+  if (!userId || !action) return
+
   try {
     let name = actorName
     if (!name && userId) {
@@ -17,7 +35,7 @@ export async function logActivity(userId, { action, category, description, actor
       metadata,
     })
   } catch (err) {
-    console.error('logActivity error:', err)
+    console.error('Failed to write activity log:', err)
   }
 }
 
