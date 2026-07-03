@@ -1,13 +1,24 @@
 import express from 'express'
 import Campaign from '../models/Campaign.js'
+import Buyer from '../models/Buyer.js'
+import User from '../models/User.js'
 import { authRequired } from '../middleware/auth.js'
 import { toJSON, toJSONList } from '../config/db.js'
-import User from '../models/User.js'
 import { logActivity } from '../utils/logActivity.js'
 
 const router = express.Router()
 
 router.use(authRequired)
+
+/** 1st in list = highest priority number for routing. */
+async function applyBuyerPriorityOrder(userId, buyerIds = []) {
+  const ids = [...new Set(buyerIds.map(String))].filter(Boolean)
+  await Promise.all(
+    ids.map((id, index) =>
+      Buyer.updateOne({ _id: id, userId }, { $set: { priority: ids.length - index } })
+    )
+  )
+}
 
 router.get('/', async (req, res) => {
   try {
@@ -26,14 +37,20 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Campaign name is required' })
     }
 
+    const orderedBuyerIds = Array.isArray(buyerIds) ? buyerIds : []
+
     const campaign = await Campaign.create({
       userId: req.userId,
       name: name.trim(),
       strategy: strategy || 'Sticky',
       duplicateHandling: duplicateHandling || 'Normal',
       active: active !== false,
-      buyerIds: Array.isArray(buyerIds) ? buyerIds : [],
+      buyerIds: orderedBuyerIds,
     })
+
+    if (orderedBuyerIds.length) {
+      await applyBuyerPriorityOrder(req.userId, orderedBuyerIds)
+    }
 
     const user = await User.findById(req.userId)
     await logActivity({
@@ -63,6 +80,9 @@ router.put('/:id', async (req, res) => {
     }
     if (req.body.buyerIds !== undefined) {
       campaign.buyerIds = Array.isArray(req.body.buyerIds) ? req.body.buyerIds : []
+      if (campaign.buyerIds.length) {
+        await applyBuyerPriorityOrder(req.userId, campaign.buyerIds)
+      }
     }
     if (req.body.name) campaign.name = req.body.name.trim()
 
