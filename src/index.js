@@ -12,6 +12,7 @@ import callRoutes from './routes/calls.js'
 import activityLogRoutes from './routes/activityLogs.js'
 import didRoutes from './routes/dids.js'
 import customerRoutes from './routes/customers.js'
+import walletRoutes from './routes/wallet.js'
 import routingRoutes from './routes/routing.js'
 
 const app = express()
@@ -51,6 +52,7 @@ app.use('/api/calls', callRoutes)
 app.use('/api/activity-logs', activityLogRoutes)
 app.use('/api/dids', didRoutes)
 app.use('/api/customers', customerRoutes)
+app.use('/api/wallet', walletRoutes)
 app.use('/api/routing', routingRoutes)
 
 app.use((_req, res) => {

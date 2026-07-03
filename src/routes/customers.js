@@ -32,6 +32,7 @@ async function ownedCustomer(masterId, customerId) {
 
 async function enrichCustomer(customer) {
   const json = publicCustomer(customer)
+  json.walletBalance = Math.round(Number(customer.walletBalance || 0) * 100) / 100
   const dids = await DID.find({ assignedCustomerId: customer._id }).select('number status id')
   json.assignedDids = dids.map((d) => ({
     id: String(d._id),

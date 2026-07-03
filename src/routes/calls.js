@@ -8,6 +8,7 @@ import { logActivity } from '../utils/logActivity.js'
 import { updateRoutingAfterCall } from '../utils/routing.js'
 import Campaign from '../models/Campaign.js'
 import { customerCallFilter } from '../utils/roles.js'
+import { debitForCall } from '../utils/wallet.js'
 
 const router = express.Router()
 
@@ -339,6 +340,19 @@ router.post('/webhook', async (req, res) => {
       description: `Call from ${caller} — ${status || 'completed'} (${billsec ?? duration ?? 0}s)`,
       metadata: { callId: call._id, caller, did },
     })
+
+    try {
+      await debitForCall({
+        tenantUserId: userId,
+        did,
+        callId: call._id,
+        billsec: billsec ?? duration ?? 0,
+        status: status || 'missed',
+        uniqueId,
+      })
+    } catch (walletErr) {
+      console.error('Wallet debit error:', walletErr)
+    }
 
     let strategy = ''
     let duplicateHandling = 'Normal'
