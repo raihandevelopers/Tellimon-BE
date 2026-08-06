@@ -3,6 +3,7 @@ import mongoose from 'mongoose'
 import Buyer from '../models/Buyer.js'
 import CallRecord from '../models/CallRecord.js'
 import { authRequired } from '../middleware/auth.js'
+import { personalDataUserId } from '../middleware/requireMaster.js'
 import { toJSON, toJSONList } from '../config/db.js'
 import { logActivity } from '../utils/logActivity.js'
 import { customerCallFilter } from '../utils/roles.js'
@@ -32,19 +33,20 @@ function formatTalkTime(seconds) {
 router.get('/reports', async (req, res) => {
   try {
     const { from, to, status } = req.query
-    const userId = req.userId
-    const customerFilter = await customerCallFilter(userId, req.userRole, req.authUserId)
+    const ownerUserId = personalDataUserId(req)
+    const tenantUserId = req.userId
+    const customerFilter = await customerCallFilter(tenantUserId, req.userRole, req.authUserId)
     const callFilter = buildCallListFilter({ from, to, status })
 
     const match = {
-      userId: new mongoose.Types.ObjectId(userId),
+      userId: new mongoose.Types.ObjectId(tenantUserId),
       ...customerFilter,
     }
     if (callFilter.status) match.status = callFilter.status
     if (callFilter.$expr) match.$expr = callFilter.$expr
 
     const [buyers, grouped] = await Promise.all([
-      Buyer.find({ userId }).sort({ priority: 1, name: 1, createdAt: -1 }),
+      Buyer.find({ userId: ownerUserId }).sort({ priority: 1, name: 1, createdAt: -1 }),
       CallRecord.aggregate([
         { $match: match },
         {
@@ -123,7 +125,8 @@ router.get('/reports', async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
-    const buyers = await Buyer.find({ userId: req.userId }).sort({ createdAt: -1 })
+    const userId = personalDataUserId(req)
+    const buyers = await Buyer.find({ userId }).sort({ createdAt: -1 })
     res.json(toJSONList(buyers))
   } catch (err) {
     console.error('List buyers error:', err)
@@ -133,13 +136,14 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
+    const userId = personalDataUserId(req)
     const { name, number, dailyCap, priority, ringTimeout, concurrentCalls, status } = req.body
     if (!number?.trim()) {
       return res.status(400).json({ error: 'Buyer number is required' })
     }
 
     const buyer = await Buyer.create({
-      userId: req.userId,
+      userId,
       name: name?.trim() || '',
       number: number.trim(),
       dailyCap: dailyCap ?? 0,
@@ -149,7 +153,7 @@ router.post('/', async (req, res) => {
       status: status || 'Active',
     })
 
-    await logActivity(req.userId, {
+    await logActivity(userId, {
       action: 'buyer_created',
       category: 'buyer',
       description: `Buyer ${buyer.name || buyer.number} created`,
@@ -164,7 +168,8 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
   try {
-    const buyer = await Buyer.findOne({ _id: req.params.id, userId: req.userId })
+    const userId = personalDataUserId(req)
+    const buyer = await Buyer.findOne({ _id: req.params.id, userId })
     if (!buyer) return res.status(404).json({ error: 'Buyer not found' })
 
     const fields = ['name', 'number', 'dailyCap', 'priority', 'ringTimeout', 'concurrentCalls', 'status']
@@ -177,7 +182,7 @@ router.put('/:id', async (req, res) => {
 
     await buyer.save()
 
-    await logActivity(req.userId, {
+    await logActivity(userId, {
       action: 'buyer_updated',
       category: 'buyer',
       description: `Buyer ${buyer.name || buyer.number} updated`,
@@ -192,10 +197,11 @@ router.put('/:id', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   try {
-    const buyer = await Buyer.findOneAndDelete({ _id: req.params.id, userId: req.userId })
+    const userId = personalDataUserId(req)
+    const buyer = await Buyer.findOneAndDelete({ _id: req.params.id, userId })
     if (!buyer) return res.status(404).json({ error: 'Buyer not found' })
 
-    await logActivity(req.userId, {
+    await logActivity(userId, {
       action: 'buyer_deleted',
       category: 'buyer',
       description: `Buyer ${buyer.name || buyer.number} deleted`,

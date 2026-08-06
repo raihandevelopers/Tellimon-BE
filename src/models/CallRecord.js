@@ -6,6 +6,7 @@ const callRecordSchema = new mongoose.Schema(
     caller: { type: String, default: '' },
     did: { type: String, default: '' },
     buyerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Buyer' },
+    buyerName: { type: String, default: '' },
     buyerNumber: { type: String, default: '' },
     status: {
       type: String,

@@ -58,11 +58,25 @@ function pickFromPool(pool, strategy, campaignId, state, caller, stickyMap) {
       const sticky = pool.find((b) => String(b.id || b._id) === String(stickyId))
       if (sticky) return sticky
     }
-    return [...pool].sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0))[0]
+    return [...pool].sort((a, b) => {
+      const pr = Number(b.priority || 0) - Number(a.priority || 0)
+      if (pr !== 0) return pr
+      const aActive = Number(a._activeCalls || 0)
+      const bActive = Number(b._activeCalls || 0)
+      if (aActive !== bActive) return aActive - bActive
+      return String(a.id || a._id).localeCompare(String(b.id || b._id))
+    })[0]
   }
 
   if (strategy === 'Priority') {
-    return [...pool].sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0))[0]
+    return [...pool].sort((a, b) => {
+      const pr = Number(b.priority || 0) - Number(a.priority || 0)
+      if (pr !== 0) return pr
+      const aActive = Number(a._activeCalls || 0)
+      const bActive = Number(b._activeCalls || 0)
+      if (aActive !== bActive) return aActive - bActive
+      return String(a.id || a._id).localeCompare(String(b.id || b._id))
+    })[0]
   }
 
   if (strategy === 'Random') {
@@ -82,6 +96,7 @@ function pickFromPool(pool, strategy, campaignId, state, caller, stickyMap) {
 
 export async function getBuyerCallCountsToday(userId) {
   const start = startOfToday()
+  // Call CDRs are stored under the tenant (master) userId.
   const rows = await CallRecord.aggregate([
     {
       $match: {
@@ -99,36 +114,65 @@ export async function getBuyerCallCountsToday(userId) {
   return map
 }
 
+/**
+ * Resolve buyer for an inbound DID.
+ * - Unassigned / admin DIDs → master (tenant) buyers & campaigns
+ * - DIDs assigned to a customer who has buyers → that customer's buyers & campaigns
+ * - Assigned but customer has no buyers yet → fall back to master routing
+ */
 export async function resolveBuyer({
   userId,
   did,
   caller,
   activeCallsByBuyer = {},
 }) {
+  const tenantUserId = String(userId)
   const didDigits = normalizeDigits(did)
   const callerDigits = normalizeDigits(caller)
 
-  const [buyers, dids, stateDoc] = await Promise.all([
-    Buyer.find({ userId }).lean(),
-    DID.find({ userId }).lean(),
-    RoutingState.findOneAndUpdate(
-      { userId },
-      { $setOnInsert: { userId } },
-      { upsert: true, new: true }
-    ),
-  ])
-
-  const buyerJson = buyers.map((b) => ({ ...b, id: b._id.toString() }))
-  const callsToday = await getBuyerCallCountsToday(userId)
-
+  const dids = await DID.find({ userId: tenantUserId }).lean()
   const didRecord = dids.find((d) => normalizeDigits(d.number) === didDigits)
   if (didRecord && didRecord.status === 'Inactive') {
     return { buyer: null, reason: 'did_inactive' }
   }
 
+  let routingOwnerId = tenantUserId
+  if (didRecord?.assignedCustomerId) {
+    const customerId = String(didRecord.assignedCustomerId)
+    const customerBuyerCount = await Buyer.countDocuments({
+      userId: customerId,
+      status: 'Active',
+    })
+    if (customerBuyerCount > 0) {
+      routingOwnerId = customerId
+    }
+  }
+
+  const [buyers, stateDoc] = await Promise.all([
+    Buyer.find({ userId: routingOwnerId }).lean(),
+    RoutingState.findOneAndUpdate(
+      { userId: routingOwnerId },
+      { $setOnInsert: { userId: routingOwnerId } },
+      { upsert: true, new: true }
+    ),
+  ])
+
+  const buyerJson = buyers.map((b) => ({ ...b, id: b._id.toString() }))
+  // Daily caps use tenant CDR store (Asterisk posts under master userId)
+  const callsToday = await getBuyerCallCountsToday(tenantUserId)
+
   let campaign = null
   if (didRecord?.campaignId) {
-    campaign = await Campaign.findOne({ _id: didRecord.campaignId, userId }).lean()
+    campaign = await Campaign.findOne({
+      _id: didRecord.campaignId,
+      userId: routingOwnerId,
+    }).lean()
+  }
+  // Customer DID may still point at an old master campaign id — pick their active campaign.
+  if (!campaign && routingOwnerId !== tenantUserId) {
+    campaign = await Campaign.findOne({ userId: routingOwnerId, active: true })
+      .sort({ updatedAt: -1 })
+      .lean()
   }
 
   const eligibility = (buyer) =>
@@ -148,6 +192,7 @@ export async function resolveBuyer({
         campaignId: campaign?._id?.toString() || null,
         campaignName: campaign?.name || null,
         strategy: 'Direct',
+        routingOwnerId,
       }
     }
   }
@@ -157,6 +202,11 @@ export async function resolveBuyer({
     buyerJson
   )
   pool = pool.filter(eligibility)
+
+  pool = pool.map((b) => ({
+    ...b,
+    _activeCalls: Number(activeCallsByBuyer[String(b._id || b.id)] || 0),
+  }))
 
   const state = {
     roundRobinIndex: { ...(stateDoc.roundRobinIndex || {}) },
@@ -181,13 +231,13 @@ export async function resolveBuyer({
     state.stickyMap
   )
 
-  if (picked && state.roundRobinIndex !== stateDoc.roundRobinIndex) {
+  if (picked && JSON.stringify(state.roundRobinIndex) !== JSON.stringify(stateDoc.roundRobinIndex || {})) {
     stateDoc.roundRobinIndex = state.roundRobinIndex
     await stateDoc.save()
   }
 
   if (!picked) {
-    return { buyer: null, reason: 'no_eligible_buyer' }
+    return { buyer: null, reason: 'no_eligible_buyer', routingOwnerId }
   }
 
   return {
@@ -195,6 +245,7 @@ export async function resolveBuyer({
     campaignId: campaign?._id?.toString() || null,
     campaignName: campaign?.name || null,
     strategy,
+    routingOwnerId,
   }
 }
 

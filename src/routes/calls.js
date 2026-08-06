@@ -2,17 +2,132 @@ import express from 'express'
 import mongoose from 'mongoose'
 import CallRecord from '../models/CallRecord.js'
 import LiveCall from '../models/LiveCall.js'
+import Buyer from '../models/Buyer.js'
+import DID from '../models/DID.js'
 import { authRequired } from '../middleware/auth.js'
 import { toJSON, toJSONList } from '../config/db.js'
 import { logActivity } from '../utils/logActivity.js'
 import { updateRoutingAfterCall } from '../utils/routing.js'
 import Campaign from '../models/Campaign.js'
-import { customerCallFilter, isMaster } from '../utils/roles.js'
+import { customerCallFilter, isMaster, normalizeDidNumber } from '../utils/roles.js'
 import { loadCustomerDidDisplayMap, maskCallForCustomer } from '../utils/customerDidDisplay.js'
 import { debitForCall } from '../utils/wallet.js'
 import { buildCallListFilter } from '../utils/callFilters.js'
 
 const router = express.Router()
+
+function buyerNumberKeys(number) {
+  const digits = normalizeDidNumber(number)
+  if (!digits) return []
+  const keys = new Set([digits])
+  if (digits.length === 11 && digits.startsWith('1')) keys.add(digits.slice(1))
+  if (digits.length === 10) keys.add(`1${digits}`)
+  return [...keys]
+}
+
+async function loadLiveCallLookup(userId) {
+  const dids = await DID.find({ userId }).select('number campaignId assignedCustomerId').lean()
+  const ownerIds = [
+    userId,
+    ...new Set(
+      dids
+        .map((d) => (d.assignedCustomerId ? String(d.assignedCustomerId) : null))
+        .filter(Boolean)
+    ),
+  ]
+  const [buyers, campaigns] = await Promise.all([
+    Buyer.find({ userId: { $in: ownerIds } }).select('name number').lean(),
+    Campaign.find({ userId: { $in: ownerIds } }).select('name buyerIds').lean(),
+  ])
+
+  const buyersById = new Map()
+  const buyersByNumber = new Map()
+  for (const b of buyers) {
+    const id = String(b._id)
+    buyersById.set(id, b)
+    for (const key of buyerNumberKeys(b.number)) {
+      if (!buyersByNumber.has(key)) buyersByNumber.set(key, b)
+    }
+  }
+
+  const campaignsById = new Map()
+  const campaignsByBuyerId = new Map()
+  for (const c of campaigns) {
+    const id = String(c._id)
+    campaignsById.set(id, c)
+    for (const bid of c.buyerIds || []) {
+      const key = String(bid)
+      if (!campaignsByBuyerId.has(key)) campaignsByBuyerId.set(key, c)
+    }
+  }
+
+  const campaignIdByDid = new Map()
+  for (const d of dids) {
+    if (!d.campaignId) continue
+    for (const key of buyerNumberKeys(d.number)) {
+      campaignIdByDid.set(key, String(d.campaignId))
+    }
+  }
+
+  return { buyersById, buyersByNumber, campaignsById, campaignsByBuyerId, campaignIdByDid }
+}
+
+function resolveLiveCallMeta(lookup, call = {}) {
+  let buyer = null
+  const buyerId = String(call.buyerId || '').trim()
+  if (buyerId && lookup.buyersById.has(buyerId)) buyer = lookup.buyersById.get(buyerId)
+  if (!buyer) {
+    for (const key of buyerNumberKeys(call.buyerNumber)) {
+      if (lookup.buyersByNumber.has(key)) {
+        buyer = lookup.buyersByNumber.get(key)
+        break
+      }
+    }
+  }
+
+  const resolvedBuyerId = buyer ? String(buyer._id) : buyerId || ''
+  let campaignId = String(call.campaignId || '').trim()
+  if (!campaignId || campaignId === 'none') {
+    for (const key of buyerNumberKeys(call.did)) {
+      if (lookup.campaignIdByDid.has(key)) {
+        campaignId = lookup.campaignIdByDid.get(key)
+        break
+      }
+    }
+  }
+  if ((!campaignId || campaignId === 'none') && resolvedBuyerId) {
+    const byBuyer = lookup.campaignsByBuyerId.get(resolvedBuyerId)
+    if (byBuyer) campaignId = String(byBuyer._id)
+  }
+
+  const campaign =
+    campaignId && campaignId !== 'none' ? lookup.campaignsById.get(campaignId) : null
+
+  return {
+    buyerId: resolvedBuyerId,
+    buyerName: (buyer?.name || call.buyerName || '').trim(),
+    buyerNumber: normalizeDidNumber(call.buyerNumber) || normalizeDidNumber(buyer?.number) || '',
+    campaignId: campaign ? String(campaign._id) : campaignId && campaignId !== 'none' ? campaignId : '',
+    campaignName: (campaign?.name || call.campaignName || '').trim(),
+  }
+}
+
+async function enrichLiveCalls(userId, calls) {
+  if (!calls?.length) return calls || []
+  const lookup = await loadLiveCallLookup(userId)
+  return calls.map((call) => {
+    const json = typeof call.toObject === 'function' ? call.toObject() : { ...call }
+    const meta = resolveLiveCallMeta(lookup, json)
+    return {
+      ...json,
+      buyerId: meta.buyerId || json.buyerId || '',
+      buyerName: meta.buyerName || json.buyerName || '',
+      buyerNumber: meta.buyerNumber || json.buyerNumber || '',
+      campaignId: meta.campaignId || json.campaignId || '',
+      campaignName: meta.campaignName || json.campaignName || '',
+    }
+  })
+}
 
 function dedupeLiveCalls(calls) {
   const map = new Map()
@@ -108,6 +223,7 @@ router.get('/', authRequired, async (req, res) => {
       ...c,
       durationFormatted: formatDuration(c.billsec || c.duration),
     }))
+    list = await enrichLiveCalls(req.userId, list)
     if (!isMaster(req.userRole)) {
       const displayMap = await loadCustomerDidDisplayMap(req.userId, req.authUserId)
       list = list.map((c) => maskCallForCustomer(c, displayMap))
@@ -162,7 +278,7 @@ router.get('/live', authRequired, async (req, res) => {
       ...extra,
     }).sort({ startedAt: -1 })
     const visible = dedupeLiveCalls(calls)
-    let list = toJSONList(visible)
+    let list = await enrichLiveCalls(req.userId, toJSONList(visible))
     if (!isMaster(req.userRole)) {
       const displayMap = await loadCustomerDidDisplayMap(req.userId, req.authUserId)
       list = list.map((c) => maskCallForCustomer(c, displayMap))
@@ -187,6 +303,7 @@ router.post('/live-sync', async (req, res) => {
     }
 
     const channelIds = calls.map((c) => c.channelId).filter(Boolean)
+    const lookup = await loadLiveCallLookup(userId)
 
     await LiveCall.deleteMany({
       userId,
@@ -212,13 +329,18 @@ router.post('/live-sync', async (req, res) => {
           startedAt = new Date()
         }
       }
+      const meta = resolveLiveCallMeta(lookup, c)
       await LiveCall.findOneAndUpdate(
         { userId, channelId: c.channelId },
         {
           $set: {
             caller: c.caller || '',
             did: c.did || '',
-            buyerNumber: c.buyerNumber || '',
+            buyerId: meta.buyerId,
+            buyerName: meta.buyerName,
+            buyerNumber: meta.buyerNumber || c.buyerNumber || '',
+            campaignId: meta.campaignId,
+            campaignName: meta.campaignName,
             route: c.route || 'xolo-endpoint',
             startedAt,
           },
@@ -247,6 +369,7 @@ router.post('/webhook', async (req, res) => {
       did,
       buyerId,
       buyerNumber,
+      buyerName,
       campaignId,
       status,
       duration,
@@ -282,13 +405,17 @@ router.post('/webhook', async (req, res) => {
     const end = endedAt ? new Date(endedAt) : new Date()
     const start = startedAt ? new Date(startedAt) : new Date(end.getTime() - seconds * 1000)
 
+    const lookup = await loadLiveCallLookup(userId)
+    const meta = resolveLiveCallMeta(lookup, { buyerId, buyerNumber, buyerName, did, campaignId })
+
     const call = await CallRecord.create({
       userId,
       caller: callerDigits,
       did: did || '',
-      buyerId: buyerId && /^[a-f0-9]{24}$/i.test(buyerId) ? buyerId : undefined,
-      buyerNumber: buyerNumber || '',
-      campaignId: campaignId && /^[a-f0-9]{24}$/i.test(campaignId) ? campaignId : undefined,
+      buyerId: meta.buyerId && /^[a-f0-9]{24}$/i.test(meta.buyerId) ? meta.buyerId : undefined,
+      buyerName: meta.buyerName || '',
+      buyerNumber: meta.buyerNumber || buyerNumber || '',
+      campaignId: meta.campaignId && /^[a-f0-9]{24}$/i.test(meta.campaignId) ? meta.campaignId : undefined,
       status: status || 'missed',
       duration: duration ?? 0,
       billsec: billsec ?? duration ?? 0,
@@ -323,16 +450,22 @@ router.post('/webhook', async (req, res) => {
 
     let strategy = ''
     let duplicateHandling = 'Normal'
+    let routingOwnerId = userId
+    if (buyerId || call.buyerId) {
+      const buyerDoc = await Buyer.findById(buyerId || call.buyerId).select('userId').lean()
+      if (buyerDoc?.userId) routingOwnerId = String(buyerDoc.userId)
+    }
     if (campaignId) {
-      const campaign = await Campaign.findOne({ _id: campaignId, userId })
+      const campaign = await Campaign.findById(campaignId).lean()
       if (campaign) {
         strategy = campaign.strategy
         duplicateHandling = campaign.duplicateHandling
+        if (campaign.userId) routingOwnerId = String(campaign.userId)
       }
     }
 
     await updateRoutingAfterCall({
-      userId,
+      userId: routingOwnerId,
       caller,
       buyerId: buyerId || call.buyerId,
       campaignId,

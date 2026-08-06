@@ -5,7 +5,7 @@ import { ensureSeedData } from './utils/seedData.js'
 async function seed() {
   await connectDB()
   await ensureSeedData()
-  console.log('Seed complete — login with demo@tellimon.com / demo123')
+  console.log('Seed complete — login with admin / CloudEcode#@110123')
   process.exit(0)
 }
 

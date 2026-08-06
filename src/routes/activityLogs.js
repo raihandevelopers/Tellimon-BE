@@ -1,6 +1,7 @@
 import express from 'express'
 import ActivityLog from '../models/ActivityLog.js'
 import { authRequired } from '../middleware/auth.js'
+import { personalDataUserId } from '../middleware/requireMaster.js'
 import { toJSONList } from '../config/db.js'
 
 const router = express.Router()
@@ -13,7 +14,7 @@ router.get('/', async (req, res) => {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10))
     const skip = (page - 1) * limit
 
-    const filter = { userId: req.userId }
+    const filter = { userId: personalDataUserId(req) }
     if (req.query.category && req.query.category !== 'all') {
       filter.category = req.query.category
     }

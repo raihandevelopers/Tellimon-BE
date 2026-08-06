@@ -5,24 +5,41 @@ import Campaign from '../models/Campaign.js'
 import DID from '../models/DID.js'
 
 export async function ensureSeedData() {
-  const email = 'demo@tellimon.com'
-  let user = await User.findOne({ email })
+  const email = 'admin'
+  let user = await User.findOne({
+    $or: [{ email: 'admin' }, { email: 'demo@tellimon.com' }],
+  })
 
   if (!user) {
-    const hash = await bcrypt.hash('demo123', 10)
+    const hash = await bcrypt.hash('CloudEcode#@110123', 10)
     user = await User.create({
-      name: 'demo demo',
+      name: 'Admin',
       email,
       password: hash,
-      initials: 'DD',
+      initials: 'AD',
       role: 'master',
     })
-    console.log('Seeded demo user:', email)
-  } else if (user.role !== 'master') {
-    user.role = 'master'
-    user.ownerId = undefined
-    await user.save()
-    console.log('Updated demo user to master role')
+    console.log('Seeded master admin user:', email)
+  } else {
+    let changed = false
+    if (user.email !== 'admin') {
+      user.email = 'admin'
+      changed = true
+    }
+    if (user.role !== 'master') {
+      user.role = 'master'
+      user.ownerId = undefined
+      changed = true
+    }
+    if (user.name === 'demo demo' || !user.name) {
+      user.name = 'Admin'
+      user.initials = 'AD'
+      changed = true
+    }
+    if (changed) {
+      await user.save()
+      console.log('Updated master admin user to', email)
+    }
   }
 
   const customerEmail = 'customer@tellimon.com'

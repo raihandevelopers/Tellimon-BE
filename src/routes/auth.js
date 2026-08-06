@@ -21,12 +21,19 @@ router.post('/login', async (req, res) => {
     }
 
     const normalized = email.trim().toLowerCase()
+    const aliasMap = {
+      admin: 'admin',
+      demo: 'admin',
+      'demo@tellimon.com': 'admin',
+    }
+    const lookupEmail = aliasMap[normalized] || normalized
+
     let user = await User.findOne({
-      $or: [{ email: normalized }, { email: normalized === 'demo' ? 'demo@tellimon.com' : normalized }],
+      $or: [{ email: lookupEmail }, { email: normalized }],
     })
 
-    if (!user && normalized === 'demo') {
-      user = await User.findOne({ email: 'demo@tellimon.com' })
+    if (!user && (normalized === 'admin' || normalized === 'demo')) {
+      user = await User.findOne({ email: 'admin' })
     }
 
     if (!user) {

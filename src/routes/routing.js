@@ -4,6 +4,7 @@ import Campaign from '../models/Campaign.js'
 import DID from '../models/DID.js'
 import RoutingState from '../models/RoutingState.js'
 import { authRequired } from '../middleware/auth.js'
+import { requireMaster } from '../middleware/requireMaster.js'
 import { toJSONList } from '../config/db.js'
 import { getBuyerCallCountsToday, normalizeDigits, resolveBuyer } from '../utils/routing.js'
 
@@ -18,13 +19,21 @@ function checkAsteriskSecret(req, res) {
   return true
 }
 
-router.get('/snapshot', authRequired, async (req, res) => {
+router.get('/snapshot', authRequired, requireMaster, async (req, res) => {
   try {
     const userId = req.userId
-    const [buyers, campaigns, dids, state, callsToday] = await Promise.all([
-      Buyer.find({ userId }),
-      Campaign.find({ userId }),
-      DID.find({ userId }),
+    const dids = await DID.find({ userId })
+    const customerIds = [
+      ...new Set(
+        dids
+          .map((d) => (d.assignedCustomerId ? String(d.assignedCustomerId) : null))
+          .filter(Boolean)
+      ),
+    ]
+    const ownerIds = [userId, ...customerIds]
+    const [buyers, campaigns, state, callsToday] = await Promise.all([
+      Buyer.find({ userId: { $in: ownerIds } }),
+      Campaign.find({ userId: { $in: ownerIds } }),
       RoutingState.findOne({ userId }),
       getBuyerCallCountsToday(userId),
     ])

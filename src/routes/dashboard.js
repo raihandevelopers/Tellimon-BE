@@ -4,7 +4,8 @@ import Target from '../models/Target.js'
 import BlockedContact from '../models/BlockedContact.js'
 import CallRecord from '../models/CallRecord.js'
 import { authRequired } from '../middleware/auth.js'
-import { customerCallFilter } from '../utils/roles.js'
+import { personalDataUserId } from '../middleware/requireMaster.js'
+import { customerCallFilter, isMaster } from '../utils/roles.js'
 import { getIstBusinessDayBounds, callPeriodExprFilter } from '../utils/istDayBounds.js'
 
 const router = express.Router()
@@ -13,16 +14,17 @@ router.use(authRequired)
 
 router.get('/stats', async (req, res) => {
   try {
-    const userId = req.userId
-    const callFilter = await customerCallFilter(userId, req.userRole, req.authUserId)
+    const tenantUserId = req.userId
+    const personalUserId = personalDataUserId(req)
+    const callFilter = await customerCallFilter(tenantUserId, req.userRole, req.authUserId)
     const period = getIstBusinessDayBounds()
     const periodFilter = callPeriodExprFilter(period.start, period.end)
-    const base = { userId, ...callFilter, ...periodFilter }
+    const base = { userId: tenantUserId, ...callFilter, ...periodFilter }
 
     const [campaigns, targets, blocked, totalCalls, answered, missed] = await Promise.all([
-      Campaign.countDocuments({ userId }),
-      Target.countDocuments({ userId }),
-      BlockedContact.countDocuments({ userId }),
+      Campaign.countDocuments({ userId: personalUserId }),
+      isMaster(req.userRole) ? Target.countDocuments({ userId: tenantUserId }) : Promise.resolve(0),
+      BlockedContact.countDocuments({ userId: personalUserId }),
       CallRecord.countDocuments(base),
       CallRecord.countDocuments({ ...base, status: 'answered' }),
       CallRecord.countDocuments({
