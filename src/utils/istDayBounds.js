@@ -71,7 +71,9 @@ export function getIstBusinessDayBounds(now = new Date(), resetHour = RESET_HOUR
 /**
  * Business-day range for report filters.
  * - no from/to → current 8 AM → next 8 AM window
- * - from/to YYYY-MM-DD → from @ 8 AM IST through end of `to` business day (next day 8 AM)
+ * - from only → that day 8 AM through end of current business day
+ * - to only → that single business day (8 AM → next 8 AM)
+ * - from+to → from @ 8 AM through end of `to` business day
  */
 export function getIstBusinessRange({ from, to } = {}, now = new Date(), resetHour = RESET_HOUR) {
   const fromOk = /^\d{4}-\d{2}-\d{2}$/.test(String(from || ''))
@@ -81,8 +83,22 @@ export function getIstBusinessRange({ from, to } = {}, now = new Date(), resetHo
     return getIstBusinessDayBounds(now, resetHour)
   }
 
-  const startYmd = fromOk ? from : to
-  const endDayYmd = toOk ? to : from
+  let startYmd = fromOk ? from : to
+  let endDayYmd = toOk ? to : from
+
+  // from only → through today's business day
+  if (fromOk && !toOk) {
+    const current = getIstBusinessDayBounds(now, resetHour)
+    endDayYmd = current.startYmd
+    if (startYmd > endDayYmd) endDayYmd = startYmd
+  }
+
+  if (startYmd > endDayYmd) {
+    const tmp = startYmd
+    startYmd = endDayYmd
+    endDayYmd = tmp
+  }
+
   const start = istDateTime(startYmd, resetHour)
   const end = istDateTime(addIstDays(endDayYmd, 1), resetHour)
 
@@ -97,11 +113,13 @@ export function getIstBusinessRange({ from, to } = {}, now = new Date(), resetHo
 }
 
 export function callPeriodExprFilter(start, end) {
+  const startDate = new Date(start)
+  const endDate = new Date(end)
   return {
     $expr: {
       $and: [
-        { $gte: [{ $ifNull: ['$startedAt', '$createdAt'] }, start] },
-        { $lt: [{ $ifNull: ['$startedAt', '$createdAt'] }, end] },
+        { $gte: [{ $ifNull: ['$startedAt', '$createdAt'] }, startDate] },
+        { $lt: [{ $ifNull: ['$startedAt', '$createdAt'] }, endDate] },
       ],
     },
   }
