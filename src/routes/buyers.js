@@ -8,6 +8,7 @@ import { toJSON, toJSONList } from '../config/db.js'
 import { logActivity } from '../utils/logActivity.js'
 import { customerCallFilter } from '../utils/roles.js'
 import { buildCallListFilter } from '../utils/callFilters.js'
+import { getIstBusinessRange, callPeriodExprFilter } from '../utils/istDayBounds.js'
 
 const router = express.Router()
 
@@ -36,14 +37,17 @@ router.get('/reports', async (req, res) => {
     const ownerUserId = personalDataUserId(req)
     const tenantUserId = req.userId
     const customerFilter = await customerCallFilter(tenantUserId, req.userRole, req.authUserId)
-    const callFilter = buildCallListFilter({ from, to, status })
+    // Same business day as dashboard: 8:00 AM IST → 8:00 AM IST next day
+    const period = getIstBusinessRange({ from, to })
+    const periodFilter = callPeriodExprFilter(period.start, period.end)
+    const callFilter = buildCallListFilter({ status })
 
     const match = {
       userId: new mongoose.Types.ObjectId(tenantUserId),
       ...customerFilter,
+      ...periodFilter,
     }
     if (callFilter.status) match.status = callFilter.status
-    if (callFilter.$expr) match.$expr = callFilter.$expr
 
     const [buyers, grouped] = await Promise.all([
       Buyer.find({ userId: ownerUserId }).sort({ priority: 1, name: 1, createdAt: -1 }),
@@ -112,10 +116,16 @@ router.get('/reports', async (req, res) => {
 
     res.json({
       reports,
-      from: from || null,
-      to: to || null,
+      from: from || period.startYmd || null,
+      to: to || period.startYmd || null,
       status: status || null,
       totalCalls: reports.reduce((sum, r) => sum + r.totalCalls, 0),
+      period: {
+        start: period.start.toISOString(),
+        end: period.end.toISOString(),
+        label: period.label,
+        resetHour: period.resetHour,
+      },
     })
   } catch (err) {
     console.error('Buyer reports error:', err)

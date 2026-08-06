@@ -41,7 +41,21 @@ function formatIstLabel(date) {
   })
 }
 
-/** Dashboard day window: 8:00 AM IST → 8:00 AM IST next day. */
+function businessBoundsForStartYmd(startYmd, resetHour = RESET_HOUR) {
+  const endYmd = addIstDays(startYmd, 1)
+  const start = istDateTime(startYmd, resetHour)
+  const end = istDateTime(endYmd, resetHour)
+  return {
+    start,
+    end,
+    resetHour,
+    startYmd,
+    endYmd,
+    label: `${formatIstLabel(start)} – ${formatIstLabel(end)} IST`,
+  }
+}
+
+/** Dashboard / reports day window: 8:00 AM IST → 8:00 AM IST next day. */
 export function getIstBusinessDayBounds(now = new Date(), resetHour = RESET_HOUR) {
   const today = istYmd(now)
   const hour = istHour(now)
@@ -51,14 +65,33 @@ export function getIstBusinessDayBounds(now = new Date(), resetHour = RESET_HOUR
     startYmd = addIstDays(today, -1)
   }
 
-  const endYmd = addIstDays(startYmd, 1)
+  return businessBoundsForStartYmd(startYmd, resetHour)
+}
+
+/**
+ * Business-day range for report filters.
+ * - no from/to → current 8 AM → next 8 AM window
+ * - from/to YYYY-MM-DD → from @ 8 AM IST through end of `to` business day (next day 8 AM)
+ */
+export function getIstBusinessRange({ from, to } = {}, now = new Date(), resetHour = RESET_HOUR) {
+  const fromOk = /^\d{4}-\d{2}-\d{2}$/.test(String(from || ''))
+  const toOk = /^\d{4}-\d{2}-\d{2}$/.test(String(to || ''))
+
+  if (!fromOk && !toOk) {
+    return getIstBusinessDayBounds(now, resetHour)
+  }
+
+  const startYmd = fromOk ? from : to
+  const endDayYmd = toOk ? to : from
   const start = istDateTime(startYmd, resetHour)
-  const end = istDateTime(endYmd, resetHour)
+  const end = istDateTime(addIstDays(endDayYmd, 1), resetHour)
 
   return {
     start,
     end,
     resetHour,
+    startYmd,
+    endYmd: addIstDays(endDayYmd, 1),
     label: `${formatIstLabel(start)} – ${formatIstLabel(end)} IST`,
   }
 }
