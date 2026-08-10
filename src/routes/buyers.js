@@ -3,7 +3,7 @@ import mongoose from 'mongoose'
 import Buyer from '../models/Buyer.js'
 import CallRecord from '../models/CallRecord.js'
 import { authRequired } from '../middleware/auth.js'
-import { personalDataUserId } from '../middleware/requireMaster.js'
+import { personalDataUserId, visibleUserIdFilter } from '../middleware/requireMaster.js'
 import { toJSON, toJSONList } from '../config/db.js'
 import { logActivity } from '../utils/logActivity.js'
 import { customerCallFilter } from '../utils/roles.js'
@@ -34,7 +34,7 @@ function formatTalkTime(seconds) {
 router.get('/reports', async (req, res) => {
   try {
     const { from, to, status } = req.query
-    const ownerUserId = personalDataUserId(req)
+    const ownerScope = await visibleUserIdFilter(req)
     const tenantUserId = req.userId
     const customerFilter = await customerCallFilter(tenantUserId, req.userRole, req.authUserId)
     // Same business day as dashboard: 8:00 AM IST → 8:00 AM IST next day
@@ -50,7 +50,7 @@ router.get('/reports', async (req, res) => {
     if (callFilter.status) match.status = callFilter.status
 
     const [buyers, grouped] = await Promise.all([
-      Buyer.find({ userId: ownerUserId }).sort({ priority: 1, name: 1, createdAt: -1 }),
+      Buyer.find(ownerScope).sort({ priority: 1, name: 1, createdAt: -1 }),
       CallRecord.aggregate([
         { $match: match },
         {
@@ -135,8 +135,8 @@ router.get('/reports', async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
-    const userId = personalDataUserId(req)
-    const buyers = await Buyer.find({ userId }).sort({ createdAt: -1 })
+    const scope = await visibleUserIdFilter(req)
+    const buyers = await Buyer.find(scope).sort({ createdAt: -1 })
     res.json(toJSONList(buyers))
   } catch (err) {
     console.error('List buyers error:', err)
@@ -178,8 +178,8 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
   try {
-    const userId = personalDataUserId(req)
-    const buyer = await Buyer.findOne({ _id: req.params.id, userId })
+    const scope = await visibleUserIdFilter(req)
+    const buyer = await Buyer.findOne({ _id: req.params.id, ...scope })
     if (!buyer) return res.status(404).json({ error: 'Buyer not found' })
 
     const fields = ['name', 'number', 'dailyCap', 'priority', 'ringTimeout', 'concurrentCalls', 'status']
@@ -192,7 +192,7 @@ router.put('/:id', async (req, res) => {
 
     await buyer.save()
 
-    await logActivity(userId, {
+    await logActivity(String(buyer.userId), {
       action: 'buyer_updated',
       category: 'buyer',
       description: `Buyer ${buyer.name || buyer.number} updated`,
@@ -207,11 +207,11 @@ router.put('/:id', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   try {
-    const userId = personalDataUserId(req)
-    const buyer = await Buyer.findOneAndDelete({ _id: req.params.id, userId })
+    const scope = await visibleUserIdFilter(req)
+    const buyer = await Buyer.findOneAndDelete({ _id: req.params.id, ...scope })
     if (!buyer) return res.status(404).json({ error: 'Buyer not found' })
 
-    await logActivity(userId, {
+    await logActivity(String(buyer.userId), {
       action: 'buyer_deleted',
       category: 'buyer',
       description: `Buyer ${buyer.name || buyer.number} deleted`,

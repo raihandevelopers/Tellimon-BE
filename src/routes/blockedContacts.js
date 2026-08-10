@@ -1,7 +1,7 @@
 import express from 'express'
 import BlockedContact from '../models/BlockedContact.js'
 import { authRequired } from '../middleware/auth.js'
-import { personalDataUserId } from '../middleware/requireMaster.js'
+import { personalDataUserId, visibleUserIdFilter } from '../middleware/requireMaster.js'
 import { isMaster } from '../utils/roles.js'
 import { toJSON, toJSONList } from '../config/db.js'
 import { logActivity } from '../utils/logActivity.js'
@@ -13,8 +13,8 @@ router.use(authRequired)
 
 router.get('/', async (req, res) => {
   try {
-    const userId = personalDataUserId(req)
-    const contacts = await BlockedContact.find({ userId }).sort({ createdAt: -1 })
+    const scope = await visibleUserIdFilter(req)
+    const contacts = await BlockedContact.find(scope).sort({ createdAt: -1 })
     res.json(toJSONList(contacts))
   } catch (err) {
     console.error('List blocked contacts error:', err)
@@ -59,11 +59,11 @@ router.post('/', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   try {
-    const userId = personalDataUserId(req)
-    const contact = await BlockedContact.findOneAndDelete({ _id: req.params.id, userId })
+    const scope = await visibleUserIdFilter(req)
+    const contact = await BlockedContact.findOneAndDelete({ _id: req.params.id, ...scope })
     if (!contact) return res.status(404).json({ error: 'Contact not found' })
 
-    await logActivity(userId, {
+    await logActivity(String(contact.userId), {
       action: 'contact_unblocked',
       category: 'blocked',
       description: `Unblocked ${contact.number}`,

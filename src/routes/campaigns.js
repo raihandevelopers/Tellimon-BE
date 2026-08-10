@@ -3,7 +3,7 @@ import Campaign from '../models/Campaign.js'
 import Buyer from '../models/Buyer.js'
 import User from '../models/User.js'
 import { authRequired } from '../middleware/auth.js'
-import { personalDataUserId } from '../middleware/requireMaster.js'
+import { personalDataUserId, visibleUserIdFilter } from '../middleware/requireMaster.js'
 import { toJSON, toJSONList } from '../config/db.js'
 import { logActivity } from '../utils/logActivity.js'
 
@@ -23,8 +23,8 @@ async function applyBuyerPriorityOrder(userId, buyerIds = []) {
 
 router.get('/', async (req, res) => {
   try {
-    const userId = personalDataUserId(req)
-    const campaigns = await Campaign.find({ userId }).sort({ createdAt: -1 })
+    const scope = await visibleUserIdFilter(req)
+    const campaigns = await Campaign.find(scope).sort({ createdAt: -1 })
     res.json(toJSONList(campaigns))
   } catch (err) {
     console.error('List campaigns error:', err)
@@ -40,7 +40,12 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Campaign name is required' })
     }
 
-    const orderedBuyerIds = Array.isArray(buyerIds) ? buyerIds : []
+    const requestedBuyerIds = Array.isArray(buyerIds) ? buyerIds.map(String) : []
+    const ownedBuyers = requestedBuyerIds.length
+      ? await Buyer.find({ _id: { $in: requestedBuyerIds }, userId }).select('_id')
+      : []
+    const ownedSet = new Set(ownedBuyers.map((b) => String(b._id)))
+    const orderedBuyerIds = requestedBuyerIds.filter((id) => ownedSet.has(id))
 
     const campaign = await Campaign.create({
       userId,
@@ -74,18 +79,26 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
   try {
-    const userId = personalDataUserId(req)
-    const campaign = await Campaign.findOne({ _id: req.params.id, userId })
+    const scope = await visibleUserIdFilter(req)
+    const campaign = await Campaign.findOne({ _id: req.params.id, ...scope })
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' })
 
+    const ownerUserId = String(campaign.userId)
     const fields = ['name', 'strategy', 'duplicateHandling', 'active']
     for (const field of fields) {
       if (req.body[field] !== undefined) campaign[field] = req.body[field]
     }
     if (req.body.buyerIds !== undefined) {
-      campaign.buyerIds = Array.isArray(req.body.buyerIds) ? req.body.buyerIds : []
+      const requestedBuyerIds = Array.isArray(req.body.buyerIds)
+        ? req.body.buyerIds.map(String)
+        : []
+      const ownedBuyers = requestedBuyerIds.length
+        ? await Buyer.find({ _id: { $in: requestedBuyerIds }, userId: ownerUserId }).select('_id')
+        : []
+      const ownedSet = new Set(ownedBuyers.map((b) => String(b._id)))
+      campaign.buyerIds = requestedBuyerIds.filter((id) => ownedSet.has(id))
       if (campaign.buyerIds.length) {
-        await applyBuyerPriorityOrder(userId, campaign.buyerIds)
+        await applyBuyerPriorityOrder(ownerUserId, campaign.buyerIds)
       }
     }
     if (req.body.name) campaign.name = req.body.name.trim()
@@ -94,7 +107,7 @@ router.put('/:id', async (req, res) => {
 
     const user = await User.findById(req.authUserId)
     await logActivity({
-      userId,
+      userId: ownerUserId,
       actorName: user?.name,
       action: 'campaign_updated',
       category: 'campaign',
@@ -110,13 +123,13 @@ router.put('/:id', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   try {
-    const userId = personalDataUserId(req)
-    const campaign = await Campaign.findOneAndDelete({ _id: req.params.id, userId })
+    const scope = await visibleUserIdFilter(req)
+    const campaign = await Campaign.findOneAndDelete({ _id: req.params.id, ...scope })
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' })
 
     const user = await User.findById(req.authUserId)
     await logActivity({
-      userId,
+      userId: String(campaign.userId),
       actorName: user?.name,
       action: 'campaign_deleted',
       category: 'campaign',
