@@ -13,6 +13,8 @@ import { customerCallFilter, isMaster, normalizeDidNumber } from '../utils/roles
 import { loadCustomerDidDisplayMap, maskCallForCustomer } from '../utils/customerDidDisplay.js'
 import { debitForCall } from '../utils/wallet.js'
 import { buildCallListFilter } from '../utils/callFilters.js'
+import { hangupAsteriskChannel, isSafeChannelId } from '../utils/hangupChannel.js'
+import User from '../models/User.js'
 
 const router = express.Router()
 
@@ -287,6 +289,53 @@ router.get('/live', authRequired, async (req, res) => {
   } catch (err) {
     console.error('Live calls error:', err)
     res.status(500).json({ error: 'Failed to fetch live calls' })
+  }
+})
+
+/** Disconnect an active live call (Asterisk channel hangup). */
+router.post('/live/:id/hangup', authRequired, async (req, res) => {
+  try {
+    const extra = await customerCallFilter(req.userId, req.userRole, req.authUserId)
+    const live = await LiveCall.findOne({
+      _id: req.params.id,
+      userId: req.userId,
+      ...extra,
+    })
+    if (!live) {
+      return res.status(404).json({ error: 'Live call not found' })
+    }
+
+    const channelId = String(live.channelId || '').trim()
+    if (!isSafeChannelId(channelId)) {
+      return res.status(400).json({ error: 'Invalid channel for hangup' })
+    }
+
+    try {
+      await hangupAsteriskChannel(channelId)
+    } catch (err) {
+      if (err.message === 'INVALID_CHANNEL') {
+        return res.status(400).json({ error: 'Invalid channel for hangup' })
+      }
+      console.error('Asterisk hangup failed:', err)
+      return res.status(502).json({ error: 'Failed to hang up call on Asterisk' })
+    }
+
+    await LiveCall.deleteOne({ _id: live._id })
+
+    const actor = await User.findById(req.authUserId || req.userId).select('name')
+    await logActivity({
+      userId: isMaster(req.userRole) ? req.userId : req.authUserId,
+      actorName: actor?.name,
+      action: 'live_call_hangup',
+      category: 'call',
+      description: `Disconnected live call ${channelId} (caller ${live.caller || 'unknown'} → DID ${live.did || '—'})`,
+      metadata: { channelId, caller: live.caller, did: live.did, buyerNumber: live.buyerNumber },
+    })
+
+    res.json({ success: true, channelId })
+  } catch (err) {
+    console.error('Live hangup error:', err)
+    res.status(500).json({ error: 'Failed to disconnect live call' })
   }
 })
 
