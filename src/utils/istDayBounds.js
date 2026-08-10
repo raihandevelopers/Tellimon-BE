@@ -1,3 +1,5 @@
+import { hasTimeComponent, parseIstBound } from './callFilters.js'
+
 const IST = 'Asia/Kolkata'
 const RESET_HOUR = 8
 
@@ -69,22 +71,52 @@ export function getIstBusinessDayBounds(now = new Date(), resetHour = RESET_HOUR
 }
 
 /**
- * Business-day range for report filters.
+ * Range for buyer/report filters.
  * - no from/to → current 8 AM → next 8 AM window
- * - from only → that day 8 AM through end of current business day
- * - to only → that single business day (8 AM → next 8 AM)
- * - from+to → from @ 8 AM through end of `to` business day
+ * - date-only from/to → business-day window (8 AM boundaries)
+ * - datetime from/to → exact IST timestamps
  */
 export function getIstBusinessRange({ from, to } = {}, now = new Date(), resetHour = RESET_HOUR) {
-  const fromOk = /^\d{4}-\d{2}-\d{2}$/.test(String(from || ''))
-  const toOk = /^\d{4}-\d{2}-\d{2}$/.test(String(to || ''))
+  const fromRaw = String(from || '').trim()
+  const toRaw = String(to || '').trim()
+  const fromDt = fromRaw ? parseIstBound(fromRaw, { end: false }) : null
+  const toDt = toRaw ? parseIstBound(toRaw, { end: true }) : null
 
-  if (!fromOk && !toOk) {
+  if (!fromDt && !toDt) {
     return getIstBusinessDayBounds(now, resetHour)
   }
 
-  let startYmd = fromOk ? from : to
-  let endDayYmd = toOk ? to : from
+  // Exact clock times when either side includes HH:mm
+  if (hasTimeComponent(fromRaw) || hasTimeComponent(toRaw)) {
+    let start = fromDt
+    let end = toDt
+    if (start && end && start > end) {
+      const tmp = start
+      start = end
+      end = tmp
+    }
+    if (!start && end) {
+      start = parseIstBound(istYmd(end), { end: false })
+    }
+    if (start && !end) {
+      end = now
+      if (end < start) end = start
+    }
+    return {
+      start,
+      end,
+      resetHour,
+      startYmd: istYmd(start),
+      endYmd: istYmd(end),
+      label: `${formatIstLabel(start)} – ${formatIstLabel(end)} IST`,
+    }
+  }
+
+  const fromOk = /^\d{4}-\d{2}-\d{2}$/.test(fromRaw)
+  const toOk = /^\d{4}-\d{2}-\d{2}$/.test(toRaw)
+
+  let startYmd = fromOk ? fromRaw : toRaw
+  let endDayYmd = toOk ? toRaw : fromRaw
 
   // from only → through today's business day
   if (fromOk && !toOk) {

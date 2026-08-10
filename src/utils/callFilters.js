@@ -1,13 +1,45 @@
-export function istDayStart(dateStr) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || ''))) return null
-  const d = new Date(`${dateStr}T00:00:00+05:30`)
+/**
+ * Parse report filter bounds as Asia/Kolkata (IST).
+ * Accepts:
+ * - YYYY-MM-DD
+ * - YYYY-MM-DDTHH:mm
+ * - YYYY-MM-DDTHH:mm:ss
+ * - same with a space instead of T
+ */
+export function parseIstBound(raw, { end = false } = {}) {
+  const s = String(raw || '')
+    .trim()
+    .replace(' ', 'T')
+  if (!s) return null
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const d = new Date(end ? `${s}T23:59:59.999+05:30` : `${s}T00:00:00+05:30`)
+    return Number.isNaN(d.getTime()) ? null : d
+  }
+
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?$/)
+  if (!m) return null
+
+  const [, ymd, hh, mm, ss] = m
+  let second = ss
+  if (second == null) {
+    second = end ? '59' : '00'
+  }
+  const frac = end && ss == null ? '.999' : ''
+  const d = new Date(`${ymd}T${hh}:${mm}:${second}${frac}+05:30`)
   return Number.isNaN(d.getTime()) ? null : d
 }
 
+export function hasTimeComponent(raw) {
+  return /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(String(raw || '').trim())
+}
+
+export function istDayStart(dateStr) {
+  return parseIstBound(dateStr, { end: false })
+}
+
 export function istDayEnd(dateStr) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || ''))) return null
-  const d = new Date(`${dateStr}T23:59:59.999+05:30`)
-  return Number.isNaN(d.getTime()) ? null : d
+  return parseIstBound(dateStr, { end: true })
 }
 
 export function buildCallListFilter({ status, from, to, number } = {}) {
@@ -26,8 +58,13 @@ export function buildCallListFilter({ status, from, to, number } = {}) {
   }
 
   const dateParts = []
-  const start = from ? istDayStart(from) : null
-  const end = to ? istDayEnd(to) : null
+  let start = from ? parseIstBound(from, { end: false }) : null
+  let end = to ? parseIstBound(to, { end: true }) : null
+  if (start && end && start > end) {
+    const tmp = start
+    start = end
+    end = tmp
+  }
   if (start) {
     dateParts.push({ $gte: [{ $ifNull: ['$startedAt', '$createdAt'] }, start] })
   }
