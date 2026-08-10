@@ -37,6 +37,22 @@ export async function visibleDataUserIds(req) {
   return [String(req.userId), ...customers.map((c) => String(c._id))]
 }
 
+/**
+ * Full tenant owner ids (master + every customer).
+ * Used for uniqueness checks that apply across the whole tenant.
+ * req.userId is always the master tenant id (customers resolve via ownerId).
+ */
+export async function tenantDataUserIds(req) {
+  const tenantId = String(req.userId)
+  const customers = await User.find({
+    role: 'customer',
+    ownerId: tenantId,
+  })
+    .select('_id')
+    .lean()
+  return [tenantId, ...customers.map((c) => String(c._id))]
+}
+
 /** Mongo filter for userId scoped by visibleDataUserIds. */
 export async function visibleUserIdFilter(req) {
   const ids = await visibleDataUserIds(req)

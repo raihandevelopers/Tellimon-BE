@@ -3,13 +3,46 @@ import Campaign from '../models/Campaign.js'
 import Buyer from '../models/Buyer.js'
 import User from '../models/User.js'
 import { authRequired } from '../middleware/auth.js'
-import { personalDataUserId, visibleUserIdFilter } from '../middleware/requireMaster.js'
+import {
+  personalDataUserId,
+  tenantDataUserIds,
+  visibleUserIdFilter,
+} from '../middleware/requireMaster.js'
 import { toJSON, toJSONList } from '../config/db.js'
 import { logActivity } from '../utils/logActivity.js'
 
 const router = express.Router()
 
 router.use(authRequired)
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** Campaign names must be unique across the whole tenant (case-insensitive). */
+async function assertUniqueCampaignName(req, name, excludeId = null) {
+  const trimmed = String(name || '').trim()
+  if (!trimmed) {
+    const err = new Error('Campaign name is required')
+    err.status = 400
+    throw err
+  }
+
+  const ownerIds = await tenantDataUserIds(req)
+  const filter = {
+    userId: { $in: ownerIds },
+    name: { $regex: `^${escapeRegex(trimmed)}$`, $options: 'i' },
+  }
+  if (excludeId) filter._id = { $ne: excludeId }
+
+  const existing = await Campaign.findOne(filter).select('_id name').lean()
+  if (existing) {
+    const err = new Error('Campaign name already exists. Please choose a unique name.')
+    err.status = 409
+    throw err
+  }
+  return trimmed
+}
 
 /** 1st in list = highest priority number for routing. */
 async function applyBuyerPriorityOrder(userId, buyerIds = []) {
@@ -36,9 +69,7 @@ router.post('/', async (req, res) => {
   try {
     const userId = personalDataUserId(req)
     const { name, strategy, duplicateHandling, active, buyerIds } = req.body
-    if (!name?.trim()) {
-      return res.status(400).json({ error: 'Campaign name is required' })
-    }
+    const uniqueName = await assertUniqueCampaignName(req, name)
 
     const requestedBuyerIds = Array.isArray(buyerIds) ? buyerIds.map(String) : []
     const ownedBuyers = requestedBuyerIds.length
@@ -49,7 +80,7 @@ router.post('/', async (req, res) => {
 
     const campaign = await Campaign.create({
       userId,
-      name: name.trim(),
+      name: uniqueName,
       strategy: strategy || 'Sticky',
       duplicateHandling: duplicateHandling || 'Normal',
       active: active !== false,
@@ -66,12 +97,15 @@ router.post('/', async (req, res) => {
       actorName: user?.name,
       action: 'campaign_created',
       category: 'campaign',
-      description: `Created campaign "${name.trim()}"`,
+      description: `Created campaign "${uniqueName}"`,
       metadata: { campaignId: campaign._id, strategy },
     })
 
     res.status(201).json(toJSON(campaign))
   } catch (err) {
+    if (err.status === 400 || err.status === 409) {
+      return res.status(err.status).json({ error: err.message })
+    }
     console.error('Create campaign error:', err)
     res.status(500).json({ error: 'Failed to create campaign' })
   }
@@ -84,7 +118,10 @@ router.put('/:id', async (req, res) => {
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' })
 
     const ownerUserId = String(campaign.userId)
-    const fields = ['name', 'strategy', 'duplicateHandling', 'active']
+    if (req.body.name !== undefined) {
+      campaign.name = await assertUniqueCampaignName(req, req.body.name, campaign._id)
+    }
+    const fields = ['strategy', 'duplicateHandling', 'active']
     for (const field of fields) {
       if (req.body[field] !== undefined) campaign[field] = req.body[field]
     }
@@ -101,7 +138,6 @@ router.put('/:id', async (req, res) => {
         await applyBuyerPriorityOrder(ownerUserId, campaign.buyerIds)
       }
     }
-    if (req.body.name) campaign.name = req.body.name.trim()
 
     await campaign.save()
 
@@ -116,6 +152,9 @@ router.put('/:id', async (req, res) => {
 
     res.json(toJSON(campaign))
   } catch (err) {
+    if (err.status === 400 || err.status === 409) {
+      return res.status(err.status).json({ error: err.message })
+    }
     console.error('Update campaign error:', err)
     res.status(500).json({ error: 'Failed to update campaign' })
   }
