@@ -10,6 +10,8 @@ import {
 } from '../middleware/requireMaster.js'
 import { toJSON, toJSONList } from '../config/db.js'
 import { logActivity } from '../utils/logActivity.js'
+import { isMaster } from '../utils/roles.js'
+import { loadCustomerLabelMaps } from '../utils/customerLabels.js'
 
 const router = express.Router()
 
@@ -58,7 +60,20 @@ router.get('/', async (req, res) => {
   try {
     const scope = await visibleUserIdFilter(req)
     const campaigns = await Campaign.find(scope).sort({ createdAt: -1 })
-    res.json(toJSONList(campaigns))
+    let list = toJSONList(campaigns)
+    if (isMaster(req.userRole)) {
+      const maps = await loadCustomerLabelMaps(req.userId)
+      list = list.map((c) => {
+        const label = maps.labelForOwnerId(c.userId)
+        return {
+          ...c,
+          customerId: label.customerId,
+          customerName: label.customerName,
+          isAdminOwned: label.isAdminOwned,
+        }
+      })
+    }
+    res.json(list)
   } catch (err) {
     console.error('List campaigns error:', err)
     res.status(500).json({ error: 'Failed to fetch campaigns' })

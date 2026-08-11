@@ -15,6 +15,7 @@ import { debitForCall } from '../utils/wallet.js'
 import { buildCallListFilter } from '../utils/callFilters.js'
 import { hangupAsteriskChannel, isSafeChannelId } from '../utils/hangupChannel.js'
 import User from '../models/User.js'
+import { attachCustomerToCalls, shouldExposeCustomerLabels } from '../utils/customerLabels.js'
 
 const router = express.Router()
 
@@ -226,6 +227,9 @@ router.get('/', authRequired, async (req, res) => {
       durationFormatted: formatDuration(c.billsec || c.duration),
     }))
     list = await enrichLiveCalls(req.userId, list)
+    if (shouldExposeCustomerLabels(req.userRole)) {
+      list = await attachCustomerToCalls(req.userId, list)
+    }
     if (!isMaster(req.userRole)) {
       const displayMap = await loadCustomerDidDisplayMap(req.userId, req.authUserId)
       list = list.map((c) => maskCallForCustomer(c, displayMap))
@@ -281,6 +285,9 @@ router.get('/live', authRequired, async (req, res) => {
     }).sort({ startedAt: -1 })
     const visible = dedupeLiveCalls(calls)
     let list = await enrichLiveCalls(req.userId, toJSONList(visible))
+    if (shouldExposeCustomerLabels(req.userRole)) {
+      list = await attachCustomerToCalls(req.userId, list)
+    }
     if (!isMaster(req.userRole)) {
       const displayMap = await loadCustomerDidDisplayMap(req.userId, req.authUserId)
       list = list.map((c) => maskCallForCustomer(c, displayMap))

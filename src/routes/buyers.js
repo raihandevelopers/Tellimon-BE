@@ -6,9 +6,10 @@ import { authRequired } from '../middleware/auth.js'
 import { personalDataUserId, visibleUserIdFilter } from '../middleware/requireMaster.js'
 import { toJSON, toJSONList } from '../config/db.js'
 import { logActivity } from '../utils/logActivity.js'
-import { customerCallFilter } from '../utils/roles.js'
+import { customerCallFilter, isMaster } from '../utils/roles.js'
 import { buildCallListFilter } from '../utils/callFilters.js'
 import { getIstBusinessRange, callPeriodExprFilter } from '../utils/istDayBounds.js'
+import { loadCustomerLabelMaps } from '../utils/customerLabels.js'
 
 const router = express.Router()
 
@@ -49,7 +50,7 @@ router.get('/reports', async (req, res) => {
     }
     if (callFilter.status) match.status = callFilter.status
 
-    const [buyers, grouped] = await Promise.all([
+    const [buyers, grouped, labelMaps] = await Promise.all([
       Buyer.find(ownerScope).sort({ priority: 1, name: 1, createdAt: -1 }),
       CallRecord.aggregate([
         { $match: match },
@@ -70,6 +71,7 @@ router.get('/reports', async (req, res) => {
           },
         },
       ]),
+      isMaster(req.userRole) ? loadCustomerLabelMaps(tenantUserId) : Promise.resolve(null),
     ])
 
     const statsByKey = new Map()
@@ -101,11 +103,18 @@ router.get('/reports', async (req, res) => {
       }
 
       const talkTimeSec = row?.talkTimeSec || 0
+      const ownerLabel = labelMaps
+        ? labelMaps.labelForOwnerId(buyer.userId)
+        : { customerId: '', customerName: '', isAdminOwned: false }
+
       return {
         buyerId: idKey,
         name: buyer.name,
         number: buyer.number,
         status: buyer.status,
+        customerId: ownerLabel.customerId || '',
+        customerName: ownerLabel.customerName || '',
+        isAdminOwned: Boolean(ownerLabel.isAdminOwned),
         totalCalls: row?.totalCalls || 0,
         answered: row?.answered || 0,
         missed: row?.missed || 0,
@@ -137,7 +146,20 @@ router.get('/', async (req, res) => {
   try {
     const scope = await visibleUserIdFilter(req)
     const buyers = await Buyer.find(scope).sort({ createdAt: -1 })
-    res.json(toJSONList(buyers))
+    let list = toJSONList(buyers)
+    if (isMaster(req.userRole)) {
+      const maps = await loadCustomerLabelMaps(req.userId)
+      list = list.map((b) => {
+        const label = maps.labelForOwnerId(b.userId)
+        return {
+          ...b,
+          customerId: label.customerId,
+          customerName: label.customerName,
+          isAdminOwned: label.isAdminOwned,
+        }
+      })
+    }
+    res.json(list)
   } catch (err) {
     console.error('List buyers error:', err)
     res.status(500).json({ error: 'Failed to fetch buyers' })
