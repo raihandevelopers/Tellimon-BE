@@ -1,4 +1,5 @@
 import express from 'express'
+import mongoose from 'mongoose'
 import Campaign from '../models/Campaign.js'
 import Buyer from '../models/Buyer.js'
 import User from '../models/User.js'
@@ -49,9 +50,19 @@ async function assertUniqueCampaignName(req, name, excludeId = null) {
 /** 1st in list = highest priority number for routing. */
 async function applyBuyerPriorityOrder(userId, buyerIds = []) {
   const ids = [...new Set(buyerIds.map(String))].filter(Boolean)
+  if (!ids.length) return
+
+  // Match by buyer id among this owner's buyers (ObjectId-safe).
+  const ownerFilter = mongoose.isValidObjectId(userId)
+    ? { userId: new mongoose.Types.ObjectId(String(userId)) }
+    : { userId }
+
   await Promise.all(
     ids.map((id, index) =>
-      Buyer.updateOne({ _id: id, userId }, { $set: { priority: ids.length - index } })
+      Buyer.updateOne(
+        { _id: id, ...ownerFilter },
+        { $set: { priority: ids.length - index } }
+      )
     )
   )
 }

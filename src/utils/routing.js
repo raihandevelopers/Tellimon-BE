@@ -26,10 +26,30 @@ export function isBuyerEligible(buyer, { callsToday = 0, activeCalls = 0 } = {})
 
 function buyerPool(campaign, allBuyers) {
   const active = allBuyers.filter((b) => b.status === 'Active')
-  if (!campaign?.active) return active
+  const byId = new Map(active.map((b) => [String(b.id || b._id), b]))
+
+  // No campaign / inactive → all active buyers, ranked by stored priority
+  if (!campaign?.active) {
+    return active
+      .map((b) => ({ ...b, _rank: 1000 - Number(b.priority || 0) }))
+      .sort((a, b) => a._rank - b._rank || String(a.id || a._id).localeCompare(String(b.id || b._id)))
+  }
+
   const ids = (campaign.buyerIds || []).map(String)
-  if (!ids.length) return active
-  return active.filter((b) => ids.includes(String(b.id || b._id)))
+  // Empty buyerIds = all active (legacy), ranked by priority field
+  if (!ids.length) {
+    return active
+      .map((b) => ({ ...b, _rank: 1000 - Number(b.priority || 0) }))
+      .sort((a, b) => a._rank - b._rank || String(a.id || a._id).localeCompare(String(b.id || b._id)))
+  }
+
+  // Campaign list order IS the priority (1st = highest). Do not rely on buyer.priority alone.
+  const ordered = []
+  ids.forEach((id, index) => {
+    const buyer = byId.get(id)
+    if (buyer) ordered.push({ ...buyer, _rank: index })
+  })
+  return ordered
 }
 
 function applyDuplicateHandling(pool, duplicateHandling, caller, callerLastBuyer) {
@@ -49,6 +69,19 @@ function applyDuplicateHandling(pool, duplicateHandling, caller, callerLastBuyer
   return pool
 }
 
+/** Lower _rank = higher priority (campaign buyer order). */
+function sortByCampaignPriority(pool) {
+  return [...pool].sort((a, b) => {
+    const rankA = Number.isFinite(a._rank) ? a._rank : 1000 - Number(a.priority || 0)
+    const rankB = Number.isFinite(b._rank) ? b._rank : 1000 - Number(b.priority || 0)
+    if (rankA !== rankB) return rankA - rankB
+    const aActive = Number(a._activeCalls || 0)
+    const bActive = Number(b._activeCalls || 0)
+    if (aActive !== bActive) return aActive - bActive
+    return String(a.id || a._id).localeCompare(String(b.id || b._id))
+  })
+}
+
 function pickFromPool(pool, strategy, campaignId, state, caller, stickyMap) {
   if (!pool.length) return null
 
@@ -58,25 +91,11 @@ function pickFromPool(pool, strategy, campaignId, state, caller, stickyMap) {
       const sticky = pool.find((b) => String(b.id || b._id) === String(stickyId))
       if (sticky) return sticky
     }
-    return [...pool].sort((a, b) => {
-      const pr = Number(b.priority || 0) - Number(a.priority || 0)
-      if (pr !== 0) return pr
-      const aActive = Number(a._activeCalls || 0)
-      const bActive = Number(b._activeCalls || 0)
-      if (aActive !== bActive) return aActive - bActive
-      return String(a.id || a._id).localeCompare(String(b.id || b._id))
-    })[0]
+    return sortByCampaignPriority(pool)[0]
   }
 
   if (strategy === 'Priority') {
-    return [...pool].sort((a, b) => {
-      const pr = Number(b.priority || 0) - Number(a.priority || 0)
-      if (pr !== 0) return pr
-      const aActive = Number(a._activeCalls || 0)
-      const bActive = Number(b._activeCalls || 0)
-      if (aActive !== bActive) return aActive - bActive
-      return String(a.id || a._id).localeCompare(String(b.id || b._id))
-    })[0]
+    return sortByCampaignPriority(pool)[0]
   }
 
   if (strategy === 'Random') {
@@ -86,12 +105,13 @@ function pickFromPool(pool, strategy, campaignId, state, caller, stickyMap) {
   if (strategy === 'Round Robin') {
     const key = campaignId ? String(campaignId) : '__global__'
     const idx = Number(state.roundRobinIndex?.[key] || 0)
-    const buyer = pool[idx % pool.length]
+    const ordered = sortByCampaignPriority(pool)
+    const buyer = ordered[idx % ordered.length]
     state.roundRobinIndex = { ...state.roundRobinIndex, [key]: idx + 1 }
     return buyer
   }
 
-  return [...pool].sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0))[0]
+  return sortByCampaignPriority(pool)[0]
 }
 
 export async function getBuyerCallCountsToday(userId) {
