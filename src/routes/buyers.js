@@ -144,7 +144,10 @@ router.get('/reports', async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
-    const scope = await visibleUserIdFilter(req)
+    const ownOnly = String(req.query.own || '') === '1' || String(req.query.own || '') === 'true'
+    const scope = ownOnly
+      ? { userId: personalDataUserId(req) }
+      : await visibleUserIdFilter(req)
     const buyers = await Buyer.find(scope).sort({ createdAt: -1 })
     let list = toJSONList(buyers)
     if (isMaster(req.userRole)) {
