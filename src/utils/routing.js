@@ -24,32 +24,50 @@ export function isBuyerEligible(buyer, { callsToday = 0, activeCalls = 0 } = {})
   return Boolean(normalizeDigits(buyer.number))
 }
 
+function rankByStoredPriority(buyers) {
+  return buyers
+    .map((b) => ({ ...b, _rank: 1000 - Number(b.priority || 0) }))
+    .sort(
+      (a, b) =>
+        a._rank - b._rank || String(a.id || a._id).localeCompare(String(b.id || b._id))
+    )
+}
+
 function buyerPool(campaign, allBuyers) {
   const active = allBuyers.filter((b) => b.status === 'Active')
   const byId = new Map(active.map((b) => [String(b.id || b._id), b]))
 
-  // No campaign / inactive → all active buyers, ranked by stored priority
-  if (!campaign?.active) {
-    return active
-      .map((b) => ({ ...b, _rank: 1000 - Number(b.priority || 0) }))
-      .sort((a, b) => a._rank - b._rank || String(a.id || a._id).localeCompare(String(b.id || b._id)))
+  // DID has no campaign → owner's active buyers
+  if (!campaign) {
+    return rankByStoredPriority(active)
+  }
+
+  // Inactive campaign must not overflow to other buyers
+  if (!campaign.active) {
+    return []
   }
 
   const ids = (campaign.buyerIds || []).map(String)
-  // Empty buyerIds = all active (legacy), ranked by priority field
+  // Empty buyerIds = all active (legacy "All active")
   if (!ids.length) {
-    return active
-      .map((b) => ({ ...b, _rank: 1000 - Number(b.priority || 0) }))
-      .sort((a, b) => a._rank - b._rank || String(a.id || a._id).localeCompare(String(b.id || b._id)))
+    return rankByStoredPriority(active)
   }
 
-  // Campaign list order IS the priority (1st = highest). Do not rely on buyer.priority alone.
+  // ONLY selected buyers, in campaign list order (1st = highest)
   const ordered = []
   ids.forEach((id, index) => {
     const buyer = byId.get(id)
     if (buyer) ordered.push({ ...buyer, _rank: index })
   })
   return ordered
+}
+
+function campaignAllowsBuyer(campaign, buyerId) {
+  if (!campaign) return true
+  if (!campaign.active) return false
+  const ids = (campaign.buyerIds || []).map(String)
+  if (!ids.length) return true
+  return ids.includes(String(buyerId))
 }
 
 function applyDuplicateHandling(pool, duplicateHandling, caller, callerLastBuyer) {
@@ -188,11 +206,22 @@ export async function resolveBuyer({
       userId: routingOwnerId,
     }).lean()
   }
-  // Customer DID may still point at an old master campaign id — pick their active campaign.
+  // Stale / missing campaign id on a customer DID — use their latest active campaign.
+  // Never substitute when the attached campaign exists but is inactive.
   if (!campaign && routingOwnerId !== tenantUserId) {
     campaign = await Campaign.findOne({ userId: routingOwnerId, active: true })
       .sort({ updatedAt: -1 })
       .lean()
+  }
+
+  if (campaign && campaign.active === false) {
+    return {
+      buyer: null,
+      reason: 'campaign_inactive',
+      routingOwnerId,
+      campaignId: campaign._id?.toString() || null,
+      campaignName: campaign.name || null,
+    }
   }
 
   const eligibility = (buyer) =>
@@ -204,7 +233,7 @@ export async function resolveBuyer({
       }
     )
 
-  if (didRecord?.buyerId) {
+  if (didRecord?.buyerId && campaignAllowsBuyer(campaign, didRecord.buyerId)) {
     const direct = buyerJson.find((b) => String(b.id) === String(didRecord.buyerId))
     if (direct && eligibility(direct)) {
       return {
