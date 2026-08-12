@@ -40,7 +40,7 @@ async function loadLiveCallLookup(userId) {
   ]
   const [buyers, campaigns] = await Promise.all([
     Buyer.find({ userId: { $in: ownerIds } }).select('name number').lean(),
-    Campaign.find({ userId: { $in: ownerIds } }).select('name buyerIds').lean(),
+    Campaign.find({ userId: { $in: ownerIds } }).select('name buyerIds active').lean(),
   ])
 
   const buyersById = new Map()
@@ -54,14 +54,8 @@ async function loadLiveCallLookup(userId) {
   }
 
   const campaignsById = new Map()
-  const campaignsByBuyerId = new Map()
   for (const c of campaigns) {
-    const id = String(c._id)
-    campaignsById.set(id, c)
-    for (const bid of c.buyerIds || []) {
-      const key = String(bid)
-      if (!campaignsByBuyerId.has(key)) campaignsByBuyerId.set(key, c)
-    }
+    campaignsById.set(String(c._id), c)
   }
 
   const campaignIdByDid = new Map()
@@ -72,7 +66,7 @@ async function loadLiveCallLookup(userId) {
     }
   }
 
-  return { buyersById, buyersByNumber, campaignsById, campaignsByBuyerId, campaignIdByDid }
+  return { buyersById, buyersByNumber, campaignsById, campaignIdByDid }
 }
 
 function resolveLiveCallMeta(lookup, call = {}) {
@@ -98,20 +92,26 @@ function resolveLiveCallMeta(lookup, call = {}) {
       }
     }
   }
-  if ((!campaignId || campaignId === 'none') && resolvedBuyerId) {
-    const byBuyer = lookup.campaignsByBuyerId.get(resolvedBuyerId)
-    if (byBuyer) campaignId = String(byBuyer._id)
-  }
 
   const campaign =
     campaignId && campaignId !== 'none' ? lookup.campaignsById.get(campaignId) : null
+  // Do not label a call with a campaign just because the buyer is in it.
+  // If the DID's campaign has a selected list, only those buyers belong to it.
+  const selectedIds = (campaign?.buyerIds || []).map(String)
+  const campaignActive = campaign ? campaign.active !== false : false
+  const buyerAllowed =
+    !campaign ||
+    !selectedIds.length ||
+    !resolvedBuyerId ||
+    selectedIds.includes(resolvedBuyerId)
+  const campaignForCall = campaign && campaignActive && buyerAllowed ? campaign : null
 
   return {
     buyerId: resolvedBuyerId,
     buyerName: (buyer?.name || call.buyerName || '').trim(),
     buyerNumber: normalizeDidNumber(call.buyerNumber) || normalizeDidNumber(buyer?.number) || '',
-    campaignId: campaign ? String(campaign._id) : campaignId && campaignId !== 'none' ? campaignId : '',
-    campaignName: (campaign?.name || call.campaignName || '').trim(),
+    campaignId: campaignForCall ? String(campaignForCall._id) : '',
+    campaignName: campaignForCall ? String(campaignForCall.name || '').trim() : '',
   }
 }
 
